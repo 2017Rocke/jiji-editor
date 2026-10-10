@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>吉吉编辑软件</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"></head>
+<body>
+<aside class="rail">
+  <a class="brand" href="#" aria-label="吉吉首页"><img src="/icon.svg" alt="吉吉"><span>吉吉<span class="brand-small">编辑软件</span></span></a>
+  <div class="rail-label">你的文档工作台</div>
+  <button class="nav active" data-tool="select"><span data-icon="files"></span>PDF 编辑器<span class="nav-dot"></span></button>
+  <button class="nav" id="convertNav"><span data-icon="convert"></span>文件转 PDF</button>
+  <button class="nav" id="mergeNav"><span data-icon="layers"></span>合并文件</button>
+  <div class="rail-card"><span class="tiny-spark">✳</span><b>好工具，<br>不该有门槛。</b><p>没有会员，没有水印。<br>让每一份文档自由一点。</p><span class="free-badge">所有功能免费使用</span></div>
+  <div class="rail-bottom"><span data-icon="shield"></span><div>文件只留在你的电脑<small>离线处理 · 无需注册</small></div></div>
+  <button class="about" id="aboutBtn">关于吉吉 <span>v0.1.1</span></button>
+</aside>
+<main>
+  <header class="topbar"><div class="breadcrumb">工作台 <span>/</span> <strong>PDF 编辑器</strong></div><div class="top-actions"><span class="local-status"><i></i>本地工作模式</span><button id="openBtn" class="btn"><span data-icon="folder"></span>打开文件</button><button id="exportBtn" class="btn primary" disabled><span data-icon="download"></span>导出 PDF</button></div></header>
+  <section class="titlebar"><div><div class="eyebrow">YOUR EVERYDAY PDF STUDIO</div><h1>编辑文档，简单一点<span class="title-dot">.</span></h1><p id="subtitle">把时间留给内容，剩下的交给吉吉。</p></div><div class="title-note"><span>100%</span><small>免费 · 为日常而造</small></div></section>
+  <section class="workspace" id="workspace">
+    <div class="document-bar"><div class="file-meta"><span class="pdf-badge">PDF</span><div><b id="fileName">你的下一份好文档</b><small id="fileInfo">打开文件，开始自由编辑</small></div></div><div class="history"><button class="icon-btn" id="undoBtn" title="撤销 ⌘Z" aria-label="撤销" disabled><span data-icon="undo"></span></button><button class="icon-btn" id="redoBtn" title="重做 ⇧⌘Z" aria-label="重做" disabled><span data-icon="redo"></span></button><span class="divider"></span><button class="btn subtle" id="appendBtn" disabled><span data-icon="plus"></span>添加文件</button></div></div>
+    <div class="editor-body">
+      <aside class="pages-panel"><div class="panel-head"><b>页面</b><span id="pageCount">0 页</span></div><div class="selection-controls"><button id="selectAll" disabled>全选</button><span id="selectedCount">未选择</span></div><div id="thumbnails" class="thumbnails"><div class="empty-thumbs"><span data-icon="files"></span><p>文档页面<br>会显示在这里</p></div></div><button class="add-page" id="blankBtn" disabled><span data-icon="plus"></span>插入空白页</button></aside>
+      <section class="canvas-panel">
+        <div class="toolbar" role="toolbar" aria-label="PDF 编辑工具">
+          <button class="tool active" data-tool="select" title="浏览页面"><span data-icon="pointer"></span><span>浏览</span></button><span class="divider"></span>
+          <button class="tool" data-tool="text" title="在页面上拖动以添加文字"><span data-icon="text"></span><span>加文字</span></button>
+          <button class="tool" data-tool="replace" title="点击 PDF 原有文字进行替换"><span data-icon="edit"></span><span>改文字</span></button>
+          <button class="tool" data-tool="highlight"><span data-icon="highlight"></span><span>高亮</span></button>
+          <button class="tool" data-tool="draw"><span data-icon="pen"></span><span>画笔</span></button>
+          <button class="tool" data-tool="image"><span data-icon="image"></span><span>图片</span></button><span class="divider"></span>
+          <button class="tool" data-tool="crop"><span data-icon="crop"></span><span>裁剪</span></button>
+        </div>
+        <div class="canvas-scroll" id="canvasScroll">
+          <div class="welcome" id="welcome"><div class="paper-art"><div class="paper-back"></div><div class="paper-front"><span class="paper-jj">jj<span>✳</span></span><div class="paper-line long"></div><div class="paper-line"></div><div class="paper-line short"></div><span class="paper-tag">自由编辑</span></div></div><h2>把文件放进来，<br>把灵感带出去。</h2><p>拖入 PDF、图片或 Office 文件<br>转换、裁剪、编辑，一处完成。</p><button class="btn primary large" id="welcomeOpen"><span data-icon="plus"></span>选择文件</button><button class="sample-link" id="sampleBtn">先用示例文档试试看 <span>↗</span></button><div class="format-tags"><span>PDF</span><span>Word</span><span>Excel</span><span>PPT</span><span>图片</span></div></div>
+          <div id="pageSurface" class="page-surface" hidden><img id="pageImage" draggable="false" alt="当前 PDF 页面"><div id="textTargets"></div><svg id="drawingOverlay"></svg><div id="selectionBox" hidden></div></div>
+        </div>
+        <footer class="canvas-footer"><span id="toolHint">支持拖入文件 · 单个文件最大 64 MB</span><div class="view-controls"><button class="icon-btn" id="zoomOut" aria-label="缩小">−</button><span id="zoomLabel">适合页面</span><button class="icon-btn" id="zoomIn" aria-label="放大">＋</button><button class="fit-btn" id="fitBtn" title="适合页面"><span data-icon="fit"></span></button></div></footer>
+      </section>
+      <aside class="inspector"><div class="panel-head"><b id="inspectorTitle">页面工具</b><span data-icon="sliders"></span></div>
+        <div id="pageTools"><p class="inspector-desc">整理每一页，让文档刚刚好。</p><div class="action-grid"><button id="rotateBtn" disabled><span data-icon="rotate"></span>旋转页面</button><button id="extractBtn" disabled><span data-icon="extract"></span>提取页面</button><button id="moveUpBtn" disabled><span data-icon="up"></span>向前移动</button><button id="moveDownBtn" disabled><span data-icon="down"></span>向后移动</button></div><button id="deleteBtn" class="danger-btn" disabled><span data-icon="trash"></span>删除所选页面</button><div class="help-card"><span data-icon="bulb"></span><b>一点小提示</b><p>勾选左侧页面可以批量操作。拖动缩略图，就能调整页面顺序。</p></div><div class="office-card"><span data-icon="convert"></span><b>文件转 PDF</b><p id="officeStatus">图片、TXT 可直接转换。</p><button id="convertBtn">选择要转换的文件 <span>↗</span></button></div></div>
+        <div id="editTools" hidden><p id="editDescription" class="inspector-desc"></p><div id="textSettings"><label for="editText">文字内容</label><textarea id="editText" rows="5" placeholder="在这里输入文字…"></textarea><div class="field-row"><div><label for="fontSize">字号</label><input type="number" id="fontSize" min="6" max="96" value="18"></div><div><label for="textColor">颜色</label><input type="color" id="textColor" value="#203c2c"></div></div></div><div id="imageSettings" hidden><button class="btn" id="chooseImage">选择图片 / 签名</button><p id="imageName" class="muted">支持透明 PNG、JPG</p></div><div id="cropSettings" hidden><div class="crop-presets"><button data-crop="0.05">四周裁去 5%</button><button data-crop="0.1">四周裁去 10%</button></div><p class="note">裁剪只改变可见区域，不用于删除敏感信息。</p></div><div id="selectionStatus">还没有选框</div><button class="btn primary full" id="applyBtn" disabled>应用到页面</button><button class="btn subtle full" id="cancelTool">返回页面工具</button><div class="help-card"><span data-icon="bulb"></span><b>编辑后可以撤销</b><p id="editNote">导出会生成新的 PDF。原始文件不受影响。</p></div></div>
+        <div class="inspector-bottom"><span class="small-dot"></span>每一次编辑，都没有付费门槛</div>
+      </aside>
+    </div>
+  </section>
+  <footer class="app-footer"><span>吉吉编辑软件 <i>✳</i> 让办公自由一点</span><span id="bottomStatus">准备就绪</span></footer>
+</main>
+<input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf" hidden>
+<input type="file" id="imageInput" accept="image/png,image/jpeg" hidden>
+<div id="busy" hidden><div class="spinner"></div><b id="busyText">正在处理文档…</b><small>文件只在本机处理</small></div>
+<div id="toast" role="status" hidden></div>
+<dialog id="aboutDialog"><button id="closeAbout" class="dialog-close" aria-label="关闭">×</button><img src="/icon.svg" width="56" alt=""><h2>吉吉编辑软件</h2><p>为日常而造的免费 PDF 工作台 · v0.1.1</p><p>页面整理、图片与 Office 转换、中文文字添加、局部文字替换。全程本地处理，无账号、无广告、无水印。</p><p class="note">局部替换适用于可选中的横排文字；扫描件暂不支持 OCR，整段重新排版仍建议修改原 Word 文件。Office 转换需要本地 LibreOffice，字体缺失时排版可能变化。</p><p class="note">本软件使用 PyMuPDF / MuPDF（AGPL v3），本项目采用 AGPL v3。源码与许可随软件提供。桌面下载包未提供商业代码签名。</p></dialog>
+<script src="/app.js"></script>
+</body></html>
