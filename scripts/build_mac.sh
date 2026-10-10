@@ -10,8 +10,9 @@ export PYINSTALLER_CONFIG_DIR="$PWD/build/pyinstaller-cache"
   --add-data 'web:web' --add-data 'VERSION:.' --collect-all pymupdf --copy-metadata PyMuPDF --copy-metadata Pillow \
   --distpath build/dist --workpath build/pyinstaller server.py
 "$PYTHON" scripts/make_icon.py
+# Rebuild the complete bundle so an older release cannot leave stale resources.
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-rm -rf "$APP/Contents/Resources/backend"
 cp -R build/dist/jiji-engine "$APP/Contents/Resources/backend"
 swiftc -O -target "$APP_ARCH-apple-macosx13.0" -module-cache-path build/swift-cache scripts/MacApp.swift -o "$APP/Contents/MacOS/JijiEditor" -framework AppKit -framework WebKit
 cat > "$APP/Contents/Info.plist" <<PLIST

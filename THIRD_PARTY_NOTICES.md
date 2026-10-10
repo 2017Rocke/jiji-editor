@@ -1,6 +1,6 @@
 # 第三方软件与参考资料
 
-吉吉编辑软件 v0.1 的自有代码采用 GNU AGPL v3。完整条款见 LICENSE。
+吉吉编辑软件的自有代码采用 GNU AGPL v3。完整条款见 LICENSE。
 
 ## 运行时依赖
 
@@ -21,9 +21,9 @@
 ## 依赖的对应源码
 
 - PyMuPDF 1.26.7：https://github.com/pymupdf/PyMuPDF/tree/1.26.7
-- MuPDF：随 PyMuPDF 使用的具体版本可通过 `python -c "import pymupdf; print(pymupdf.version)"` 查询；官方源码 https://github.com/ArtifexSoftware/mupdf 。PyMuPDF 源码的构建说明会指定内核版本。
+- MuPDF 1.26.12（PyMuPDF 1.26.7 所用内核）：https://github.com/ArtifexSoftware/mupdf/tree/1.26.12 。使用 `git clone --recursive --branch 1.26.12 https://github.com/ArtifexSoftware/mupdf.git` 获取源码与构建所需子模块；PyMuPDF 源码包含内核构建说明。
 - Pillow 11.3.0：https://github.com/python-pillow/Pillow/tree/11.3.0
 - Python 3.12：https://github.com/python/cpython/tree/3.12
 - PyInstaller 6.16.0：https://github.com/pyinstaller/pyinstaller/tree/v6.16.0
 
-发行包中 `Source.zip` 包含本项目对应源文件与构建脚本，`licenses/` 保留所分发依赖的许可。没有将 AGPL 依赖改成闭源许可。
+发行包中 `Source.zip` 包含本项目对应源文件与构建脚本，`licenses/` 保留所分发依赖的许可，`DEPENDENCIES.json` 记录实际分发的解释器及依赖版本和对应上游源码地址。没有将 AGPL 依赖改成闭源许可。
