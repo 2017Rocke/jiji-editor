@@ -4,7 +4,11 @@
 
 [下载 Windows / Mac 版本](https://github.com/2017Rocke/jiji-editor/releases/latest) · [安装说明](docs/INSTALL.md) · [开发与构建](docs/DEVELOPMENT.md) · [开源项目调研](docs/research/调研与选型.md)
 
-![吉吉编辑软件界面](docs/images/editor.png)
+![吉吉文档工坊首页](docs/images/welcome.png)
+
+v0.2.0 采用暖纸色、墨绿和朱红的文档工坊界面。首页提供编辑、裁剪、合并与转换快捷入口；打开文档后切换到专注编辑布局。返回工作台时保留当前会话，可以继续编辑；退出前仍需导出保存。
+
+![吉吉编辑软件工作台](docs/images/editor.png)
 
 ## 下载哪个版本
 

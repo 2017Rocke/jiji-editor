@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        web.loadHTMLString("<html><body style='background:#f5f6f2;color:#254c37;font-family:-apple-system;text-align:center;padding-top:25vh'><h1>吉吉编辑软件</h1><p>正在打开你的文档工作台…</p></body></html>", baseURL: nil)
+        web.loadHTMLString("<html><body style='background:#f3f1e9;color:#293c34;font-family:-apple-system;text-align:center;padding-top:25vh'><span style='color:#bf5035;letter-spacing:4px;font-size:12px'>JIJI · PDF STUDIO</span><h1 style='font-family:Songti SC,serif;font-weight:500'>吉吉文档工坊</h1><p style='font-size:12px;color:#7c8176'>正在铺开你的文档工作台…</p></body></html>", baseURL: nil)
         startEngine()
     }
 
