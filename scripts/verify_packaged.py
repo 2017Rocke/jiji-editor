@@ -43,7 +43,17 @@ with tempfile.TemporaryDirectory(prefix="jiji-package-test-") as temp:
         with fitz.open(stream=pdf, filetype="pdf") as doc:
             assert len(doc) == 3
             assert "跨平台打包验证" in doc[0].get_text()
-        report = {"passed": True, "pages": 3, "chineseText": True, "render": True, "export": True}
+        before = [(p["width"], p["height"]) for p in state["pages"]]
+        state = api("/api/edit", {"action": "crop", "pages": [0, 2], "rect": [.1, .1, .9, .9], "revision": state["revision"]})
+        with fitz.open(stream=api("/api/export"), filetype="pdf") as doc:
+            for i in [0, 2]:
+                assert abs(doc[i].rect.width - before[i][0] * .8) < .1
+                assert abs(doc[i].rect.height - before[i][1] * .8) < .1
+            assert abs(doc[1].rect.width - before[1][0]) < .1
+        state = api("/api/edit", {"action": "undo", "revision": state["revision"]})
+        assert [(p["width"], p["height"]) for p in state["pages"]] == before
+        assert "payload.pages=[...selected]" in api("/app.js").decode()
+        report = {"batchCrop": True, "batchUndo": True, "passed": True, "pages": 3, "chineseText": True, "render": True, "export": True}
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report))
