@@ -74,6 +74,39 @@ class EngineTests(unittest.TestCase):
         self.edit("undo")
         self.assertAlmostEqual(self.work.doc[0].rect.width, 480)
 
+    def test_batch_crop_mixed_pages_and_single_undo(self):
+        self.work.doc[1].set_mediabox(fitz.Rect(0, 0, 800, 500))
+        self.edit("rotate", pages=[1])
+        before = [(p.rect.width, p.rect.height) for p in self.work.doc]
+        history = len(self.work.history)
+        self.edit("crop", pages=[0, 1, 1], rect=[.1, .2, .9, .8])
+        for i in [0, 1]:
+            self.assertAlmostEqual(self.work.doc[i].rect.width, before[i][0] * .8, places=3)
+            self.assertAlmostEqual(self.work.doc[i].rect.height, before[i][1] * .6, places=3)
+        self.assertEqual((self.work.doc[2].rect.width, self.work.doc[2].rect.height), before[2])
+        self.assertEqual(len(self.work.history), history + 1)
+        cropped = [(p.rect.width, p.rect.height) for p in self.work.doc]
+        self.edit("undo")
+        self.assertEqual([(p.rect.width, p.rect.height) for p in self.work.doc], before)
+        self.edit("redo")
+        self.assertEqual([(p.rect.width, p.rect.height) for p in self.work.doc], cropped)
+        self.edit("crop", pages=[0, 1], rect=[.1, .1, .9, .9])
+        with fitz.open(stream=self.work.export(), filetype="pdf") as d:
+            for i in [0, 1]:
+                self.assertAlmostEqual(d[i].rect.width, cropped[i][0] * .8, places=3)
+                self.assertAlmostEqual(d[i].rect.height, cropped[i][1] * .8, places=3)
+
+    def test_batch_crop_failure_rolls_back_all_pages(self):
+        self.work.doc[1].set_mediabox(fitz.Rect(0, 0, 10, 10))
+        before = [tuple(p.cropbox) for p in self.work.doc]
+        revision = self.work.revision
+        for pages in [[], [0, 99], [0, 1]]:
+            with self.assertRaises(UserError):
+                self.edit("crop", pages=pages, rect=[.1, .1, .2, .2])
+            self.assertEqual([tuple(p.cropbox) for p in self.work.doc], before)
+            self.assertEqual(self.work.revision, revision)
+            self.assertEqual(len(self.work.history), 0)
+
     def test_chinese_added_and_saved(self):
         self.edit("text", page=0, rect=[.1, .3, .9, .6], text="吉吉编辑软件 免费办公", size=22)
         with fitz.open(stream=self.work.export(), filetype="pdf") as d:

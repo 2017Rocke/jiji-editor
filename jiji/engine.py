@@ -333,7 +333,16 @@ class Workspace:
             index = data.get("page", len(self.doc) - 1)
             self.page(index)
             self.doc.new_page(pno=index + 1, width=595, height=842)
-        elif action in {"crop", "text", "replace", "highlight", "draw", "image"}:
+        elif action == "crop":
+            indices = self.indices(data["pages"] if "pages" in data else [data.get("page")])
+            for i in indices:
+                p = self.doc[i]
+                r = self.rect(p, data.get("rect"))
+                if min(r.width, r.height) < 3:
+                    raise UserError(f"第 {i + 1} 页选框太小，请重新框选。")
+                offset = p.cropbox_position
+                p.set_cropbox((r + (offset.x, offset.y, offset.x, offset.y)) & p.mediabox)
+        elif action in {"text", "replace", "highlight", "draw", "image"}:
             p = self.page(data.get("page"))
             if action == "draw":
                 raw = data.get("points", [])
@@ -349,9 +358,7 @@ class Workspace:
             r = self.rect(p, data.get("rect"))
             if min(r.width, r.height) < 3:
                 raise UserError("选框太小，请重新框选。")
-            if action == "crop":
-                p.set_cropbox((r + (p.cropbox_position.x, p.cropbox_position.y, p.cropbox_position.x, p.cropbox_position.y)) & p.mediabox)
-            elif action == "highlight":
+            if action == "highlight":
                 annot = p.add_rect_annot(r)
                 annot.set_colors(stroke=None, fill=self.color(data.get("color", "#f4ca45")))
                 annot.set_border(width=0)
