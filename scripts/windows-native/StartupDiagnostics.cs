@@ -28,6 +28,10 @@ namespace JijiEditor
         internal int? BackendExitCode;
         internal CoreWebView2WebErrorStatus? NavigationError;
         internal CoreWebView2ProcessFailedKind? ProcessFailure;
+        internal string DataRootKind;
+        internal string DiagnosticsDirectory;
+        internal string TemporaryDirectory;
+        internal bool DataDirectoryUnavailable;
     }
 
     internal sealed class StartupDiagnosticResult
@@ -115,6 +119,8 @@ namespace JijiEditor
                 ["processArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
                 ["stage"] = StageKey(context.Stage),
                 ["profileWritable"] = context.ProfileWritable,
+                ["dataRootKind"] = context.DataRootKind,
+                ["dataDirectoryUnavailable"] = context.DataDirectoryUnavailable,
                 ["backendExitCode"] = context.BackendExitCode,
                 ["navigationError"] = context.NavigationError?.ToString(),
                 ["processFailureKind"] = context.ProcessFailure?.ToString(),
@@ -129,8 +135,10 @@ namespace JijiEditor
         {
             var data = Create(context, exception);
             data["storage"] = "unavailable";
-            preferredDirectory ??= DefaultDirectory(false);
-            fallbackDirectory ??= DefaultDirectory(true);
+            var selectedDirectory = preferredDirectory == null && context.DiagnosticsDirectory != null;
+            preferredDirectory ??= context.DataDirectoryUnavailable ? null : context.DiagnosticsDirectory ?? DefaultDirectory(false);
+            fallbackDirectory ??= context.DataDirectoryUnavailable ? null : context.TemporaryDirectory == null ?
+                DefaultDirectory(true) : System.IO.Path.Combine(context.TemporaryDirectory, "diagnostics");
             string saved = null;
             var fallback = false;
             var name = "startup-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N") + ".json";
@@ -140,7 +148,7 @@ namespace JijiEditor
                 try
                 {
                     Directory.CreateDirectory(directory);
-                    data["storage"] = fallback ? "temporary" : "local-app-data";
+                    data["storage"] = fallback ? "temporary" : selectedDirectory ? "application-data" : "local-app-data";
                     var path = System.IO.Path.Combine(directory, name);
                     File.WriteAllText(path, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
                     saved = path;
@@ -162,7 +170,9 @@ namespace JijiEditor
                 "\r\n\r\n" + (saved == null ? "诊断报告未能写入磁盘，请复制此窗口的信息。" : "诊断报告：\r\n" + saved) +
                 "\r\n\r\n请提供阶段、错误码和诊断报告，以便确认具体原因。报告仅包含系统、组件版本和错误代码，不包含文档内容或会话凭据。";
             if (context.Stage == StartupStage.ProfileDirectory)
-                text += "\r\n当前无法准备软件用户目录，请检查当前 Windows 账户对用户文件夹的读写权限。";
+                text += context.DataDirectoryUnavailable ?
+                    "\r\n未能选定可用的软件数据文件夹。再次打开软件时，可以选择当前账户能读写的其他本机文件夹。" :
+                    "\r\n当前无法准备软件用户目录，请检查所选位置的读写权限和可用空间。";
             if (exception is BundledRuntimeException bundled)
             {
                 var advice = bundled.Reason switch

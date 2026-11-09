@@ -13,7 +13,7 @@ namespace JijiEditor
     /// <summary>Use only the application-local runtimes, including on a clean offline PC.</summary>
     internal static class BundledRuntime
     {
-        internal static string Prepare(string profileRoot, out string profile, IDictionary<string, object> report,
+        internal static string Prepare(out string fixedVersion, IDictionary<string, object> report,
             Action<StartupStage> stageChanged = null)
         {
             stageChanged?.Invoke(StartupStage.RuntimePreparation);
@@ -42,7 +42,7 @@ namespace JijiEditor
             var executable = Path.Combine(runtime, "msedgewebview2.exe");
             var manifest = Path.Combine(application, "webview2-runtime.json");
             if (!File.Exists(executable) || !File.Exists(manifest)) throw IncompletePackage();
-            var fixedVersion = FileVersionInfo.GetVersionInfo(executable).ProductVersion;
+            fixedVersion = FileVersionInfo.GetVersionInfo(executable).ProductVersion;
             try
             {
                 using var metadata = JsonDocument.Parse(File.ReadAllText(manifest));
@@ -53,13 +53,15 @@ namespace JijiEditor
             catch (Exception exception) when (exception is JsonException || exception is KeyNotFoundException ||
                                                exception is InvalidOperationException || exception is IOException)
             { throw new BundledRuntimeException("软件包内的显示组件清单无法读取。", exception, BundledRuntimeFailure.ManifestUnreadable); }
-            if (string.IsNullOrWhiteSpace(fixedVersion)) throw IncompletePackage();
+            if (!Version.TryParse(fixedVersion, out _)) throw IncompletePackage();
             report["bundledWebView2ExpectedVersion"] = fixedVersion;
             stageChanged?.Invoke(StartupStage.RuntimePermissions);
             EnsureAppContainerReadAccess(runtime);
-            // Different fixed versions must not downgrade or share an Evergreen profile.
-            profile = Path.Combine(profileRoot, "Fixed-" + fixedVersion);
+            return runtime;
+        }
 
+        internal static void ConfigureProfile(string runtime, string profile)
+        {
             // Explicit options alone can be overridden by inherited WEBVIEW2_* variables.
             // Remove those overrides and set our own fixed executable/profile locations.
             foreach (DictionaryEntry item in Environment.GetEnvironmentVariables())
@@ -71,7 +73,6 @@ namespace JijiEditor
             Environment.SetEnvironmentVariable("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", runtime);
             Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", profile);
             Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-component-update");
-            return runtime;
         }
 
         internal static void EnsureProfileWritable(string profile)

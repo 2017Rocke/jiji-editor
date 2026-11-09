@@ -13,18 +13,20 @@ namespace JijiEditor
     {
         private readonly Process process;
         private readonly SafeFileHandle job;
+        internal string TemporaryDirectory { get; private set; }
 
-        private EngineProcess(Process process, SafeFileHandle job)
+        private EngineProcess(Process process, SafeFileHandle job, string temporaryDirectory)
         {
             this.process = process;
             this.job = job;
+            TemporaryDirectory = temporaryDirectory;
         }
 
         internal bool HasExited => process.HasExited;
         internal int? ExitCode => process.HasExited ? process.ExitCode : (int?)null;
         internal int WaitForExit() { process.WaitForExit(); return process.ExitCode; }
 
-        internal static EngineProcess Start(string[] arguments)
+        internal static EngineProcess Start(string[] arguments, string temporaryDirectory = null)
         {
             var executable = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "backend", "jiji-engine.exe");
             if (!File.Exists(executable)) throw new FileNotFoundException("缺少编辑组件，请完整解压安装包后重试。");
@@ -49,6 +51,9 @@ namespace JijiEditor
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
+                if (temporaryDirectory != null)
+                    foreach (var variable in new[] { "TEMP", "TMP", "TMPDIR" })
+                        start.Environment[variable] = temporaryDirectory;
                 process = new Process { StartInfo = start };
                 // The Python server prints its token-bearing URL; deliberately discard it.
                 process.OutputDataReceived += (sender, e) => { };
@@ -57,7 +62,7 @@ namespace JijiEditor
                 if (!AssignProcessToJobObject(job, process.Handle)) throw new Win32Exception();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
-                return new EngineProcess(process, job);
+                return new EngineProcess(process, job, temporaryDirectory);
             }
             catch
             {

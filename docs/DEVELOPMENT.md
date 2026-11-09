@@ -48,9 +48,13 @@ Fixed Runtime 不自动更新。发布维护时应从微软官方稳定版来源
 
 启动诊断按运行组件核验、权限、用户目录、后台启动/握手、WebView2 环境/窗口创建和首屏加载分别记录阶段。系统 build 使用 `RtlGetVersion`，补丁修订号读取 UBR；异常只记录类型、HRESULT 与内层 Win32 错误码，不序列化异常消息、堆栈、会话地址或文档路径。原生验证会注入不可用目录和包含私密字段的异常，核对目录检查、临时目录回退、内层错误保留及报告过滤。
 
-v0.3.2 另生成只适用于 v0.3.1 的小型启动更新。`scripts/build_windows_startup_update.py` 接收旧版与新版完整解压目录，在 .NET 框架版本、依赖图、实际运行依赖文件和 Fixed Runtime 文件全部匹配后才生成更新 ZIP。发布流程下载并校验公开 v0.3.1 包，将更新实际覆盖到旧包，再运行完整原生验证。更新保留旧 backend、VERSION 与 Source.zip，新启动器源码命名为 Startup-update-Source.zip，因此编辑页版本仍为 0.3.1。该专用步骤仅在 VERSION 为 0.3.2 时运行。
+v0.3.3 统一管理应用私有数据根：首先尝试 LocalAppData/JijiEditor，再尝试应用旁按当前账户隔离的数据目录，必要时通过系统目录选择器指定父目录。profile、session、临时文件和诊断都位于选定根内。只对新建的软件自有目录设置当前用户与 SYSTEM 权限，不修改被拒绝目录的 ACL，不提权、不关闭 WebView2 沙箱；网络目录和重解析路径被拒绝。宿主及其后台子进程使用选定的私有 TEMP/TMP。
 
-现有自动化验证平台是 Windows Server 2022，不覆盖 Windows 10 1809 实机。没有目标机器的具体错误码前，不将通用初始化失败归因为某个 WebView2 版本，也不宣称诊断更新已修复所有旧系统启动问题。
+原生验证除常规编辑流程外，还通过 Windows ACL 真正拒绝默认数据目录和系统临时目录的写入，再启动同一个打包 EXE，验证自动回退后仍可裁剪、撤销、保存与应急导出。后台临时目录验证使用合成 Office 输入和测试用转换器，实际走原打包引擎的 tempfile 目录创建、输入落盘与清理路径；这项验证只证明存储链路，不替代真实 LibreOffice 转换质量验收。
+
+小型启动更新支持完整 v0.3.1、已覆盖 v0.3.2 启动补丁的 v0.3.1、完整 v0.3.2。`scripts/build_windows_startup_update.py` 严格核对 .NET 框架版本、依赖图、实际依赖文件与 Fixed Runtime 后才生成更新 ZIP；`scripts/tests/test_windows_startup_update.py` 覆盖基底组合和异常依赖拒绝。发布流程下载并校验三个历史发行文件，在三个基底上应用同一个更新 ZIP，再执行常规与权限回退的原生验证。更新保留旧 backend、VERSION 和 Source.zip，新启动器源码为 Startup-update-Source.zip；编辑页因此保持基底版本。该发布矩阵仅在 VERSION 为 0.3.3 时运行。
+
+当前自动化平台为 Windows Server 2022，不能替代 Windows 10 1809 实机。用户诊断已确认 profile-directory 阶段 UnauthorizedAccessException（0x80070005）；修复应围绕目录访问失败恢复，不将其归因于尚未执行到的 WebView2 初始化。
 
 ## 浏览器与 Office 验证
 

@@ -6,8 +6,6 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -45,6 +43,7 @@ namespace JijiEditor
             ["startupDiagnostics"] = false
         };
         private EngineProcess engine;
+        private PrivateDataDirectories dataDirectories;
         private string sessionDirectory, localOrigin, sessionToken, verificationStage = "startup";
         private bool allowClose, closePending, saving, disposed, verificationStarted;
         private bool editorReady, recovering, recoverySaved;
@@ -96,24 +95,22 @@ namespace JijiEditor
                     deadline.Start();
                     await VerifyOutboundBlockedAsync();
                 }
-                var profileRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "JijiEditor", "WebView2");
-                var runtime = BundledRuntime.Prepare(profileRoot, out var profile, report, stage => startup.Stage = stage);
+                var runtime = BundledRuntime.Prepare(out var fixedVersion, report, stage => startup.Stage = stage);
                 startup.Stage = StartupStage.ProfileDirectory;
-                BundledRuntime.EnsureProfileWritable(profile);
+                dataDirectories = PrivateDataDirectories.Select(this, fixedVersion, verificationDirectory != null);
+                sessionDirectory = dataDirectories.Session;
+                startup.DataRootKind = dataDirectories.Kind;
+                startup.DiagnosticsDirectory = dataDirectories.Diagnostics;
+                startup.TemporaryDirectory = dataDirectories.Temp;
+                dataDirectories.ApplyProcessTemp();
+                var profile = dataDirectories.Profile;
+                BundledRuntime.ConfigureProfile(runtime, profile);
                 startup.ProfileWritable = true;
                 startup.Stage = StartupStage.SessionDirectory;
-                sessionDirectory = Path.Combine(Path.GetTempPath(), "jiji-session-" + Guid.NewGuid().ToString("N"));
-                var security = new DirectorySecurity();
-                security.SetAccessRuleProtection(true, false);
-                security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User,
-                    FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-                    PropagationFlags.None, AccessControlType.Allow));
-                Directory.CreateDirectory(sessionDirectory);
-                new DirectoryInfo(sessionDirectory).SetAccessControl(security);
                 var urlFile = Path.Combine(sessionDirectory, "editor.url");
                 startup.Stage = StartupStage.BackendStart;
-                engine = EngineProcess.Start(new[] { "--no-browser", "--url-file", urlFile });
+                engine = EngineProcess.Start(new[] { "--no-browser", "--url-file", urlFile }, dataDirectories.Temp);
+                dataDirectories.Report(report, engine.TemporaryDirectory);
                 startup.Stage = StartupStage.BackendHandshake;
                 string url = null;
                 var timeout = Stopwatch.StartNew();
@@ -212,6 +209,7 @@ namespace JijiEditor
             }
             catch (Exception exception)
             {
+                if (exception is PrivateDataDirectoryException) startup.DataDirectoryUnavailable = true;
                 if (!disposed && !recovering) Fail("initialization", exception);
             }
         }
@@ -478,6 +476,15 @@ namespace JijiEditor
                 await WaitForScript("typeof api === 'function' && typeof state === 'object' && document.body.classList.contains('is-home')");
                 report["ready"] = true;
                 report["embeddedWebView"] = web.CoreWebView2 != null;
+                if (Environment.GetEnvironmentVariable("JIJI_VERIFY_STORAGE_PROBE") == "1")
+                {
+                    verificationStage = "backend-storage";
+                    // CI supplies a synthetic converter to observe the unchanged backend's
+                    // real tempfile paths. This is storage verification, not an Office fixture.
+                    await web.ExecuteScriptAsync("window.__jijiStorageProbe=false;api('/api/open',{files:[{name:'storage-probe.docx',data:'SklKSV9TVE9SQUdFX1BST0JFX0lOUFVU'}]}).then(value=>window.__jijiStorageProbe=Array.isArray(value.pages)&&value.pages.length===1)");
+                    await WaitForScript("window.__jijiStorageProbe === true");
+                    report["backendStorageProbe"] = true;
+                }
                 await web.ExecuteScriptAsync(File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NativeVerification.js")));
                 verificationStage = "sample";
                 await web.ExecuteScriptAsync("document.getElementById('sampleBtn').click()");
@@ -556,6 +563,15 @@ namespace JijiEditor
         private void VerifyStartupDiagnostics()
         {
             if (verificationDirectory == null) throw new InvalidOperationException();
+            var active = StartupDiagnostics.Write(startup, null);
+            if (active.Path == null || active.UsedTemporaryDirectory ||
+                !string.Equals(Path.GetDirectoryName(active.Path), dataDirectories.Diagnostics, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Diagnostics did not use the selected application directory.");
+            using (var parsed = JsonDocument.Parse(File.ReadAllText(active.Path)))
+                if (parsed.RootElement.GetProperty("storage").GetString() != "application-data")
+                    throw new InvalidDataException();
+            File.Delete(active.Path);
+            report["diagnosticsUnderDataRoot"] = true;
             var blocked = Path.Combine(verificationDirectory, "diagnostics-write-blocked");
             var fallback = Path.Combine(verificationDirectory, "diagnostics-fallback");
             File.WriteAllText(blocked, "The preferred diagnostics directory is intentionally unavailable.");

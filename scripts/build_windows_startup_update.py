@@ -14,6 +14,8 @@ import zipfile
 APP_FILES = {"JijiEditor.exe", "JijiEditor.dll", "JijiEditor.deps.json", "JijiEditor.runtimeconfig.json"}
 NATIVE_EXTENSIONS = {".dll", ".exe", ".json", ".config", ".manifest", ".dat", ".bin", ".pak"}
 PACKAGE_METADATA = {"DEPENDENCIES.json", "webview2-runtime.json", "startup-update.json"}
+SUPPORTED_BASE_VERSIONS = {"0.3.1", "0.3.2"}
+TARGET_VERSION = "0.3.3"
 
 
 def digest(path):
@@ -82,8 +84,8 @@ def build_update(old, new, output, report_path):
         raise RuntimeError("Provide two different, fully extracted Windows package directories.")
     base_version = (old / "VERSION").read_text(encoding="utf-8").strip()
     version = (new / "VERSION").read_text(encoding="utf-8").strip()
-    if (base_version, version) != ("0.3.1", "0.3.2"):
-        raise RuntimeError("This startup update must target a complete v0.3.1 package using v0.3.2 app files.")
+    if base_version not in SUPPORTED_BASE_VERSIONS or version != TARGET_VERSION:
+        raise RuntimeError("This startup update requires a v0.3.1/v0.3.2 base package and v0.3.3 app files.")
     for package in (old, new):
         for name in APP_FILES | {"NativeVerification.js", "Source.zip", "webview2-runtime.json",
                                  "coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "System.Private.CoreLib.dll",
@@ -112,6 +114,7 @@ def build_update(old, new, output, report_path):
             raise RuntimeError("The new package's corresponding source archive is corrupt.")
     manifest = {
         "baseVersion": base_version, "expectedVersion": version,
+        "supportedBaseVersions": sorted(SUPPORTED_BASE_VERSIONS),
         "includedFrameworks": frameworks,
         "webview2Version": read_json(old / "webview2-runtime.json")["version"],
         "verifiedNativeDependencyFiles": len(native_files),
@@ -126,13 +129,16 @@ def build_update(old, new, output, report_path):
         "preserved": ["backend/", "webview2/", "VERSION", "Source.zip", "bundled .NET and WebView2 SDK dependencies"],
     }
     instructions = (
-        "吉吉编辑软件 0.3.2 启动更新包\n\n"
-        "适用范围：已完整解压的 Windows 64 位 v0.3.1。此文件不是完整安装包。\n\n"
+        "吉吉编辑软件 0.3.3 启动更新包\n\n"
+        "适用范围：已完整解压的 Windows 64 位 v0.3.1 或 v0.3.2。\n"
+        "已在 v0.3.1 上应用过 0.3.2 启动更新的用户，也可直接使用本更新。\n"
+        "此文件不是完整安装包。\n\n"
         "1. 退出吉吉编辑软件。\n"
         "2. 将本 ZIP 中的全部文件解压到原来 JijiEditor.exe 所在文件夹。\n"
         "3. 出现同名文件提示时选择替换，再双击原文件夹里的 JijiEditor.exe。\n\n"
-        "本次只更新启动窗口和诊断能力，不需要重新下载文档处理及显示组件。\n"
-        "更新后主窗口/诊断版本为 0.3.2，编辑页面仍显示 0.3.1，属于正常情况。\n"
+        "本次更新启动窗口的目录权限处理和诊断能力，不需要重新下载文档处理及显示组件。\n"
+        "更新后主窗口/诊断版本为 0.3.3，编辑页面仍显示原完整安装包的版本\n"
+        "（0.3.1 或 0.3.2），属于正常情况。\n"
         "请保留原文件夹中的 backend、webview2 和所有其他文件。\n"
         "原 Source.zip 对应原编辑组件；Startup-update-Source.zip 对应本次启动更新。\n"
         "需要整体升级时，请使用新的完整安装包。\n"
@@ -162,7 +168,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("old_package", type=Path)
     parser.add_argument("new_package", type=Path)
-    parser.add_argument("--output", type=Path, default=Path("output/JijiEditor-0.3.2-Windows-startup-update.zip"))
+    parser.add_argument("--output", type=Path, default=Path("output/JijiEditor-0.3.3-Windows-startup-update.zip"))
     parser.add_argument("--report", type=Path, default=Path("output/startup-update-verification.json"))
     args = parser.parse_args()
     build_update(args.old_package, args.new_package, args.output, args.report)
