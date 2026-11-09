@@ -1,0 +1,14 @@
+{
+  "version": "157.0.4341.42",
+  "architecture": "x64",
+  "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/b7b22a57-b321-483e-9855-d260b076f1a7/Microsoft.WebView2.FixedVersionRuntime.157.0.4341.42.x64.cab",
+  "sha256": "cedaf8f3d12202c8803bdbae727b01c1be34540b78e8f0a10c6b401c2a8be97d",
+  "sizeBytes": 310801569,
+  "source": "https://developer.microsoft.com/microsoft-edge/api/webview2",
+  "retrievedOn": "2026-11-09",
+  "license": {
+    "path": "licenses/Microsoft.WebView2.FixedRuntime/LICENSE.html",
+    "source": "https://developer.microsoft.com/microsoft-edge/api/eula/webview2?locale=en-us&fixed=true",
+    "sha256": "4dae731c52063db6b1612c80b5a5f7d1303b986e8d1adb8bf531ce232bfd4db1"
+  }
+}

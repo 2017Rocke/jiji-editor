@@ -4,11 +4,13 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -31,7 +33,6 @@ namespace JijiEditor
             ForeColor = Color.FromArgb(39, 72, 59) };
         private readonly Button recoveryExport = new Button { Text = "导出当前 PDF", Dock = DockStyle.Bottom,
             Height = 58, Font = new Font("Microsoft YaHei UI", 12) };
-        private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 268435456 };
         private readonly string verificationDirectory;
         private readonly Dictionary<string, object> report = new Dictionary<string, object>
         {
@@ -39,7 +40,7 @@ namespace JijiEditor
             ["batchCrop"] = false, ["undo"] = false, ["pdfExport"] = false,
             ["saveCancelledKeepsDirty"] = false, ["closeGuard"] = false,
             ["recoverySaveCancelledKeepsDirty"] = false, ["recoveryPdfExport"] = false,
-            ["recoveryCloseGuard"] = false
+            ["recoveryCloseGuard"] = false, ["selfContainedDotNet"] = false, ["bundledWebView2"] = false
         };
         private EngineProcess engine;
         private string sessionDirectory, localOrigin, sessionToken, verificationStage = "startup";
@@ -91,16 +92,19 @@ namespace JijiEditor
                     deadline = new Timer { Interval = 120000 };
                     deadline.Tick += (sender, e) => Fail("verification-timeout");
                     deadline.Start();
+                    await VerifyOutboundBlockedAsync();
                 }
-                if (!await EnsureRuntimeAsync()) { Finish(false); return; }
-                if (disposed) return;
+                var profileRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "JijiEditor", "WebView2");
+                var runtime = BundledRuntime.Prepare(profileRoot, out var profile, report);
                 sessionDirectory = Path.Combine(Path.GetTempPath(), "jiji-session-" + Guid.NewGuid().ToString("N"));
                 var security = new DirectorySecurity();
                 security.SetAccessRuleProtection(true, false);
                 security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User,
                     FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
                     PropagationFlags.None, AccessControlType.Allow));
-                Directory.CreateDirectory(sessionDirectory, security);
+                Directory.CreateDirectory(sessionDirectory);
+                new DirectoryInfo(sessionDirectory).SetAccessControl(security);
                 var urlFile = Path.Combine(sessionDirectory, "editor.url");
                 engine = EngineProcess.Start(new[] { "--no-browser", "--url-file", urlFile });
                 string url = null;
@@ -122,19 +126,20 @@ namespace JijiEditor
                 sessionToken = Uri.UnescapeDataString(uri.Fragment.Substring("#token=".Length));
                 // The URL file is only a startup handshake and contains the session secret.
                 File.Delete(urlFile);
-                var profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "JijiEditor", "WebView2");
-                var environment = await WithTimeout(CoreWebView2Environment.CreateAsync(null, profile), 45000);
+                var environment = await WithTimeout(CoreWebView2Environment.CreateAsync(runtime, profile), 45000);
                 if (disposed) return;
                 await WithTimeout(web.EnsureCoreWebView2Async(environment), 45000);
                 if (disposed) return;
                 var core = web.CoreWebView2;
+                BundledRuntime.VerifyBrowser(core.BrowserProcessId, environment.BrowserVersionString, report);
                 core.Settings.AreDevToolsEnabled = false;
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.AreBrowserAcceleratorKeysEnabled = false;
                 core.Settings.IsStatusBarEnabled = false;
                 core.Settings.IsZoomControlEnabled = false;
                 core.Settings.IsBuiltInErrorPageEnabled = false;
+                // Only the loopback editor is allowed; do not send reputation lookups.
+                core.Settings.IsReputationCheckingRequired = false;
                 core.NavigationStarting += (sender, e) => { if (!IsLocal(e.Uri)) e.Cancel = true; };
                 core.NewWindowRequested += (sender, e) => { e.Handled = true; };
                 core.DownloadStarting += (sender, e) => { e.Cancel = true; };
@@ -172,8 +177,36 @@ namespace JijiEditor
             }
             catch (Exception exception)
             {
-                if (!disposed && !recovering) Fail("initialization", exception);
+                if (!disposed && !recovering)
+                {
+                    if (verificationDirectory == null && exception is BundledRuntimeException)
+                    {
+                        MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        ExitCode = 1;
+                        Finish(false);
+                    }
+                    else Fail("initialization", exception);
+                }
             }
+        }
+
+        private async Task VerifyOutboundBlockedAsync()
+        {
+            var value = Environment.GetEnvironmentVariable("JIJI_OFFLINE_PROBE_ADDRESS");
+            if (string.IsNullOrEmpty(value)) return;
+            report["outboundProbeBlocked"] = false;
+            if (!IPAddress.TryParse(value, out var address) || address.AddressFamily != AddressFamily.InterNetwork ||
+                IPAddress.IsLoopback(address)) throw new InvalidDataException();
+            using var client = new TcpClient();
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try
+            {
+                // CI supplies a previously reachable address. Open TCP only; send no data.
+                await client.ConnectAsync(address, 443, timeout.Token);
+            }
+            catch (SocketException) { report["outboundProbeBlocked"] = true; return; }
+            catch (OperationCanceledException) { report["outboundProbeBlocked"] = true; return; }
+            throw new InvalidOperationException("The offline verification connection was not blocked.");
         }
 
         private void ShowRecovery()
@@ -197,10 +230,11 @@ namespace JijiEditor
             {
                 // This path deliberately does not use the failed renderer or a JS callback.
                 byte[] bytes;
-                using (var client = new RecoveryPdfClient())
+                using (var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
+                using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) })
                 {
-                    client.Headers["X-Jiji-Token"] = sessionToken;
-                    bytes = await WithTimeout(client.DownloadDataTaskAsync(new Uri(localOrigin + "/api/export")), 30000);
+                    client.DefaultRequestHeaders.Add("X-Jiji-Token", sessionToken);
+                    bytes = await client.GetByteArrayAsync(new Uri(localOrigin + "/api/export"));
                 }
                 if (bytes.Length < 8 || Encoding.ASCII.GetString(bytes, 0, 5) != "%PDF-")
                     throw new InvalidDataException();
@@ -224,59 +258,6 @@ namespace JijiEditor
             }
         }
 
-        private sealed class RecoveryPdfClient : WebClient
-        {
-            internal RecoveryPdfClient() { Proxy = null; }
-            protected override WebRequest GetWebRequest(Uri address)
-            {
-                var request = (HttpWebRequest)base.GetWebRequest(address);
-                request.AllowAutoRedirect = false;
-                request.Timeout = 30000;
-                request.ReadWriteTimeout = 30000;
-                return request;
-            }
-        }
-
-        private async Task<bool> EnsureRuntimeAsync()
-        {
-            try
-            {
-                CoreWebView2Environment.GetAvailableBrowserVersionString();
-                return true;
-            }
-            catch (WebView2RuntimeNotFoundException)
-            {
-                if (verificationDirectory != null) { Fail("webview2-runtime-missing"); return false; }
-                var installer = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WebView2Setup.exe");
-                if (!File.Exists(installer) || !MicrosoftSignature.IsTrusted(installer))
-                {
-                    MessageBox.Show(this,
-                        "电脑缺少 Microsoft Edge WebView2 运行组件。请从微软官网安装 WebView2 Runtime，或重新下载完整的吉吉安装包。安装后重新打开软件即可。",
-                        Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return false;
-                }
-                if (MessageBox.Show(this,
-                    "首次使用需要安装微软 WebView2 运行组件，编辑器才能在软件窗口中显示。\n\n现在安装吗？安装需要联网，文档不会上传。",
-                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return false;
-                loading.Text = "正在安装微软运行组件…\n\n请按安装窗口提示完成安装。";
-                using (var installerProcess = Process.Start(new ProcessStartInfo(installer, "/install")
-                { UseShellExecute = true, WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory }))
-                {
-                    var timeout = Stopwatch.StartNew();
-                    while (!disposed && !installerProcess.HasExited && timeout.ElapsedMilliseconds < 300000)
-                        await Task.Delay(250);
-                }
-                if (disposed) return false;
-                try { CoreWebView2Environment.GetAvailableBrowserVersionString(); return true; }
-                catch (WebView2RuntimeNotFoundException)
-                {
-                    MessageBox.Show(this, "运行组件尚未安装完成。请完成安装后重新打开吉吉编辑软件。",
-                        Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return false;
-                }
-            }
-        }
-
         private bool IsLocal(string source)
         {
             Uri address;
@@ -292,20 +273,23 @@ namespace JijiEditor
             bool saveRequest = false;
             try
             {
-                var message = json.DeserializeObject(e.WebMessageAsJson) as Dictionary<string, object>;
-                if (message == null || !message.ContainsKey("type") || !Equals(message["type"], "saveFile")) return;
+                var raw = e.WebMessageAsJson;
+                if (raw.Length > 268435456) throw new InvalidDataException();
+                using var message = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 4 });
+                var value = message.RootElement;
+                if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("type", out var type) ||
+                    type.ValueKind != JsonValueKind.String || type.GetString() != "saveFile") return;
                 saveRequest = true;
                 saving = true;
-                object encodedValue, nameValue;
-                if (!message.TryGetValue("data", out encodedValue) || !(encodedValue is string) ||
-                    !message.TryGetValue("name", out nameValue) || !(nameValue is string))
+                if (!value.TryGetProperty("data", out var encodedValue) || encodedValue.ValueKind != JsonValueKind.String ||
+                    !value.TryGetProperty("name", out var nameValue) || nameValue.ValueKind != JsonValueKind.String)
                     throw new InvalidDataException();
-                var encoded = (string)encodedValue;
+                var encoded = encodedValue.GetString();
                 if (encoded.Length > 256 * 1024 * 1024) throw new InvalidDataException();
                 var bytes = Convert.FromBase64String(encoded);
                 if (bytes.Length < 8 || Encoding.ASCII.GetString(bytes, 0, 5) != "%PDF-")
                     throw new InvalidDataException();
-                string destination = ChooseSavePath((string)nameValue);
+                string destination = ChooseSavePath(nameValue.GetString());
                 // Both UI and verification use the same cancel path and durable write path.
                 if (destination != null)
                 {
@@ -574,7 +558,7 @@ namespace JijiEditor
             if (verificationDirectory != null)
             {
                 ExitCode = passed ? 0 : 1;
-                try { File.WriteAllText(Path.Combine(verificationDirectory, "native-verification.json"), json.Serialize(report), new UTF8Encoding(false)); }
+                try { File.WriteAllText(Path.Combine(verificationDirectory, "native-verification.json"), JsonSerializer.Serialize(report), new UTF8Encoding(false)); }
                 catch { ExitCode = 1; }
             }
             allowClose = true;

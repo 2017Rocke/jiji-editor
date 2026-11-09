@@ -8,8 +8,8 @@
 - **Pillow 11.3.0**：HPND/PIL 许可。项目：https://github.com/python-pillow/Pillow 。许可保留在打包依赖元数据中。
 - **Python 3.12**：Python Software Foundation License；分发包保留解释器所需文件。
 - **Microsoft.Web.WebView2 1.0.2903.40**（Windows 独立窗口）：Microsoft 提供的 WinForms SDK 与原生加载组件。使用官方 NuGet 包：https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2903.40 。Windows 分发包在 `licenses/Microsoft.Web.WebView2/` 原样保留该包的 `LICENSE.txt`（BSD 风格再分发条款）及 `NOTICE.txt`；SDK 与本项目自有代码各自遵循原许可。
-- **Microsoft WebView2 Runtime**（Windows 系统组件）：由微软独立维护、更新，遵循微软的运行时许可。Windows 包附带从微软官方 https://go.microsoft.com/fwlink/p/?LinkId=2124703 获取的 Evergreen 安装引导程序 `WebView2Setup.exe`；构建时必须核验 PE 格式、有效的 Authenticode 签名及 Microsoft Corporation 签名者。仅在电脑缺少运行时时按用户选择安装，首次安装需要联网，不要求用户安装或选择 Edge 浏览器。官方信息、运行时下载及许可：https://developer.microsoft.com/microsoft-edge/webview2/ 。包内 `DEPENDENCIES.json` 记录安装引导程序的 SHA-256 摘要；它不是离线完整运行时。
-- **.NET Framework 4.8**（Windows 系统组件）：Windows 原生窗口的运行基础，按微软许可使用，不包含于应用分发包。官方说明：https://dotnet.microsoft.com/download/dotnet-framework/net48 。
+- **Microsoft WebView2 Fixed Version Runtime**（Windows 随包显示组件）：从微软官方来源获取完整固定版本运行环境，构建时核对下载摘要和微软 Authenticode 签名。完整二进制随应用放置于 `webview2/`，无需安装 Edge 或系统 WebView2。遵循微软 WebView2 Runtime 许可，原始条款随包提供于 `licenses/`；来源、版本及下载摘要见 `DEPENDENCIES.json`。Fixed Runtime 随吉吉新版本更新，不使用 Evergreen 自动更新服务。官方下载、许可及隐私信息：https://developer.microsoft.com/microsoft-edge/webview2/ 、https://privacy.microsoft.com/privacystatement 。
+- **.NET 10 / WindowsDesktop Runtime**（Windows 随包运行组件）：以 self-contained 形式分发微软官方运行时，使用者无需安装 .NET Framework 或系统 .NET。运行时许可及第三方声明随包保留于 `licenses/`，具体版本记录于 `DEPENDENCIES.json`。官方信息：https://dotnet.microsoft.com/download/dotnet/10.0 。
 - **LibreOffice**（独立安装，可选）：MPL 2.0 等项目许可，https://github.com/LibreOffice/core 。通过独立进程调用，不包含于当前应用。用于 DOC/DOCX、XLS/XLSX、PPT/PPTX 与开放文档格式转换。软件内不提供付费转档服务。
 - **PyInstaller**（仅打包）：GPL v2 带运行时/引导程序例外，https://github.com/pyinstaller/pyinstaller 。不改变应用的 AGPL 许可。
 

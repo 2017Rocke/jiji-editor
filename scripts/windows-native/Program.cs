@@ -33,6 +33,7 @@ namespace JijiEditor
                 catch { return 2; }
             }
 
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             using (var window = new EditorWindow(verificationDirectory))

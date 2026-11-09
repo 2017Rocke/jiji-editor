@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         if: runner.os == 'Windows'
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
       - name: Check release version
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -52,46 +52,13 @@ jobs:
           if (-not (Test-Path -LiteralPath $engine)) { throw 'The Windows ZIP is missing its PDF engine' }
           "JIJI_PACKAGED_EXE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "JIJI_PACKAGED_ENGINE=$engine" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Ensure Microsoft WebView2 Runtime is available
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Get-WebView2RuntimeVersion {
-            $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-            foreach ($key in @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\Software\$client")) {
-              $installed = Get-ItemProperty -LiteralPath $key -Name pv -ErrorAction SilentlyContinue
-              if ($installed -and $installed.pv -match '^\d+\.\d+\.\d+\.\d+$' -and [version]$installed.pv -gt [version]'0.0.0.0') {
-                return $installed.pv
-              }
-            }
-          }
-          $version = Get-WebView2RuntimeVersion
-          if (-not $version) {
-            $installer = Join-Path (Split-Path -Parent $env:JIJI_PACKAGED_EXE) 'WebView2Setup.exe'
-            $signature = Get-AuthenticodeSignature -LiteralPath $installer
-            if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
-                $signature.SignerCertificate.Subject -notmatch '(^|,\s*)CN=Microsoft Corporation(,|$)' -or
-                $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
-              throw 'WebView2 installer must have a valid Microsoft signature before execution'
-            }
-            $setup = Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -PassThru
-            $null = $setup.Handle
-            if (-not $setup.WaitForExit(180000)) {
-              Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue
-              throw 'WebView2 Runtime installation timed out'
-            }
-            if ($setup.ExitCode -notin @(0, 3010)) { throw "WebView2 Runtime setup failed: $($setup.ExitCode)" }
-            $version = Get-WebView2RuntimeVersion
-            if (-not $version) { throw 'WebView2 Runtime was not detected after setup' }
-          }
-          Write-Host "Microsoft WebView2 Runtime version: $version"
       - name: Verify packaged Windows PDF engine
         if: runner.os == 'Windows'
         run: python scripts/verify_packaged.py "$env:JIJI_PACKAGED_ENGINE"
-      - name: Verify Windows native editor window
+      - name: Verify self-contained Windows editor with external network blocked
         if: runner.os == 'Windows'
-        run: python scripts/verify_windows_native.py "$env:JIJI_PACKAGED_EXE"
+        shell: pwsh
+        run: ./scripts/verify_windows_portable.ps1 -Executable $env:JIJI_PACKAGED_EXE
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows' && always()
         with:

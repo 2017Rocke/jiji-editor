@@ -26,7 +26,7 @@ bash scripts/build_mac.sh
 
 ## 构建 Windows
 
-需要 Windows x64、Python 3.12、.NET 8 SDK（用于构建 net48 原生窗口）、.NET Framework 4.8 开发包和 Git：
+需要 Windows x64、Python 3.12、.NET 10 SDK 和 Git。仅开发者需要这些构建工具，使用下载包无需另装运行时：
 
 ```powershell
 py -3.12 -m venv .venv
@@ -38,7 +38,13 @@ py -3.12 -m venv .venv
 
 Windows 包由 `JijiEditor.exe`（WinForms + WebView2）和 `backend/jiji-engine.exe`（PDF 服务）组成。`--verify-native 输出目录` 在真实内嵌窗口验证裁剪、撤销、保存、取消保存与关闭保护，并生成截图；另验证显示异常时不依赖网页的应急导出通道。保存路径和取消选择由测试注入，未自动操作系统保存对话框。服务单独支持 `--no-browser`；原生窗口不调用外部浏览器。
 
-Windows 构建会从微软官网下载 WebView2 安装引导程序并验证 Authenticode 签名，随包附带以便缺少运行时的电脑首次安装。发布测试从实际 ZIP 的中文及空格路径运行，原生窗口验证必须通过。
+Windows 使用 `dotnet publish --self-contained true -r win-x64` 携带完整 .NET/WindowsDesktop 运行环境。构建脚本从微软官网下载锁定版本的 WebView2 Fixed Runtime，核对 SHA-256 和微软 Authenticode 签名后完整打包到 `webview2/`，保留原始许可证。程序显式选择该目录，验证实际 CLR 和 WebView2 进程路径均位于应用目录，禁止退回机器上预装的运行时。
+
+Windows 10 使用 Fixed Runtime 120 及以后版本需要 AppContainer 的读取/执行权限。ZIP 不保留 ACL，因此应用在用户解压后的本机目录设置相应权限，不启动安装程序，也不请求管理员提升。Fixed Runtime 不支持 UNC/网络共享目录。
+
+发布测试从实际 ZIP 的中文及空格路径运行。`scripts/verify_windows_portable.ps1` 仅在一次性 Windows CI 环境使用：临时阻止包内程序访问非本机网络，设置无效的机器运行时搜索路径，再运行原生验证，结束时恢复防火墙状态。报告同时要求包内 CLR/WebView2 检查和编辑、保存、恢复检查通过。测试使用已安装开发工具的 Windows runner，依靠实际加载模块路径证明运行组件来自下载包；它不能替代所有 Windows 版本的实机兼容测试。
+
+Fixed Runtime 不自动更新。发布维护时应从微软官方稳定版来源刷新锁定文件、下载校验值和许可，重新运行完整 Windows 验证后发布新版。
 
 ## 浏览器与 Office 验证
 
