@@ -1,14 +1,19 @@
 """Reproducible release contents: source, dependency licenses, and notices."""
 from importlib import metadata
 from pathlib import Path
+import hashlib
 import json
+import os
 import shutil
+import struct
 import subprocess
 import sys
 import sysconfig
+import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+WEBVIEW2_SETUP_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 
 
 def source_archive(target):
@@ -57,6 +62,82 @@ def release_resources(target):
         "PyInstaller": {"version": metadata.version("pyinstaller"), "source": f"https://github.com/pyinstaller/pyinstaller/tree/v{metadata.version('pyinstaller')}"},
     }
     (target / "DEPENDENCIES.json").write_text(json.dumps(dependencies, indent=2) + "\n", encoding="utf-8")
+
+
+def windows_native_resources(target, assets_file):
+    """Keep the exact restored SDK license and verify Microsoft's runtime installer."""
+    target = Path(target)
+    assets = json.loads(Path(assets_file).read_text(encoding="utf-8-sig"))
+    matches = [(name, info) for name, info in assets["libraries"].items()
+               if name.lower().startswith("microsoft.web.webview2/")]
+    if len(matches) != 1:
+        raise RuntimeError("Expected exactly one restored WebView2 SDK version.")
+    package_name, package_info = matches[0]
+    package_path = package_info["path"]
+    locations = [Path(folder) / package_path for folder in assets["packageFolders"]]
+    sdk = next((folder for folder in locations if (folder / "LICENSE.txt").is_file()), None)
+    if sdk is None:
+        raise RuntimeError("The official WebView2 NuGet package's LICENSE.txt is missing.")
+    licenses = target / "licenses/Microsoft.Web.WebView2"
+    licenses.mkdir(parents=True, exist_ok=True)
+    for name in ["LICENSE.txt", "NOTICE.txt"]:
+        source = sdk / name
+        if not source.is_file():
+            raise RuntimeError(f"The official WebView2 NuGet package's {name} is missing.")
+        shutil.copy2(source, licenses / name)
+
+    installer = target / "WebView2Setup.exe"
+    temporary = installer.with_suffix(".download.exe")
+    try:
+        with urllib.request.urlopen(WEBVIEW2_SETUP_URL, timeout=120) as response:
+            if not response.geturl().lower().startswith("https://"):
+                raise RuntimeError("WebView2 download must remain on HTTPS.")
+            with temporary.open("wb") as output:
+                shutil.copyfileobj(response, output)
+        # Reject HTML/error pages before checking the trusted Windows signature.
+        with temporary.open("rb") as source:
+            header = source.read(64)
+            if len(header) != 64 or header[:2] != b"MZ":
+                raise RuntimeError("Microsoft's WebView2 bootstrapper is not a PE executable.")
+            source.seek(struct.unpack_from("<I", header, 60)[0])
+            if source.read(4) != b"PE\0\0":
+                raise RuntimeError("Microsoft's WebView2 bootstrapper has an invalid PE header.")
+        environment = dict(os.environ, JIJI_WEBVIEW2_INSTALLER=str(temporary.resolve()))
+        check_signature = r'''
+$ErrorActionPreference = 'Stop'
+$signature = Get-AuthenticodeSignature -LiteralPath $env:JIJI_WEBVIEW2_INSTALLER
+if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+    throw 'The WebView2 installer does not have a valid Authenticode signature.'
+}
+$subject = $signature.SignerCertificate.Subject
+if ($subject -notmatch '(^|,\s*)CN=Microsoft Corporation(,|$)' -or
+    $subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+    throw 'The WebView2 installer is not signed by Microsoft Corporation.'
+}
+Write-Output "Verified Microsoft WebView2 installer signature."
+'''
+        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", check_signature],
+                       env=environment, check=True)
+        temporary.replace(installer)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    dependencies_path = target / "DEPENDENCIES.json"
+    dependencies = json.loads(dependencies_path.read_text(encoding="utf-8"))
+    dependencies["Microsoft.Web.WebView2"] = {
+        "version": package_name.split("/", 1)[1],
+        "package": "https://www.nuget.org/packages/" + package_name,
+        "license": "licenses/Microsoft.Web.WebView2/LICENSE.txt",
+        "notices": "licenses/Microsoft.Web.WebView2/NOTICE.txt",
+    }
+    dependencies["WebView2 Runtime Bootstrapper"] = {
+        "download": WEBVIEW2_SETUP_URL,
+        "sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
+        "signature": "Valid Authenticode; Microsoft Corporation",
+        "runtime": "Evergreen; independently maintained by Microsoft",
+        "officialInformation": "https://developer.microsoft.com/microsoft-edge/webview2/",
+    }
+    dependencies_path.write_text(json.dumps(dependencies, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

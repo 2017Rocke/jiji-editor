@@ -16,3 +16,5 @@ docs/research/*.html
 docs/research/*.json
 docs/research/pymupdf-readme.md
 scripts/make_guide.py
+scripts/windows-native/bin/
+scripts/windows-native/obj/

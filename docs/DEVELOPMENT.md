@@ -26,17 +26,19 @@ bash scripts/build_mac.sh
 
 ## 构建 Windows
 
-需要 Windows x64、Python 3.12（带 tkinter）和 Git：
+需要 Windows x64、Python 3.12、.NET 8 SDK（用于构建 net48 原生窗口）、.NET Framework 4.8 开发包和 Git：
 
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-build.txt
 .venv\Scripts\python scripts\build_windows.py
 .venv\Scripts\python scripts\verify_packaged.py output\JijiEditor-Windows-x64\JijiEditor.exe
-.venv\Scripts\python scripts\verify_windows_launcher.py output\JijiEditor-Windows-x64\JijiEditor.exe
+.venv\Scripts\python scripts\verify_windows_native.py output\JijiEditor-Windows-x64\JijiEditor.exe
 ```
 
-打包后的 EXE 有两种测试模式：`--no-browser` 用于验证 PDF 服务；`--verify-launcher` 会模拟浏览器启动失败，验证随包 tkinter 窗口的失败提示、可手动打开的地址和复制按钮。常规双击请求默认浏览器打开；失败后可选择其他浏览器或复制地址。
+Windows 包由 `JijiEditor.exe`（WinForms + WebView2）和 `backend/jiji-engine.exe`（PDF 服务）组成。`--verify-native 输出目录` 在真实内嵌窗口验证裁剪、撤销、保存、取消保存与关闭保护，并生成截图。服务单独支持 `--no-browser`；原生窗口不调用外部浏览器。
+
+Windows 构建会从微软官网下载 WebView2 安装引导程序并验证 Authenticode 签名，随包附带以便缺少运行时的电脑首次安装。发布测试从实际 ZIP 的中文及空格路径运行，原生窗口验证必须通过。
 
 ## 浏览器与 Office 验证
 
@@ -53,10 +55,10 @@ node scripts/verify_ui.cjs
 发布流程会把 Windows ZIP 解压到含中文和空格的目录，再验证其中的 EXE。打包浏览器验证可单独运行：
 
 ```sh
-node scripts/verify_packaged_browser.cjs "解压目录/JijiEditor-Windows-x64/JijiEditor.exe"
+node scripts/verify_packaged_browser.cjs "解压目录/JijiEditor-Windows-x64/backend/jiji-engine.exe"
 ```
 
-此项验证真实浏览器中的脚本与样式、示例文档、批量裁剪、整批撤销及 PDF 下载，并生成不含会话地址的结果和截图。它不代表覆盖所有用户电脑的浏览器关联或系统限制；启动器还保留手动复制地址入口。
+此项验证真实浏览器中的脚本与样式、示例文档、批量裁剪、整批撤销及 PDF 下载，并生成不含会话地址的结果和截图。它不代表覆盖所有用户电脑的浏览器关联或系统限制；独立窗口另有必须通过的真实 WebView2 验证。
 
 Office 验证需要免费 LibreOffice，并安装测试依赖：
 
@@ -83,7 +85,7 @@ python scripts/verify_office.py
 - `jiji/engine.py`：格式转换、页面坐标、文字编辑、快照回滚。
 - `server.py`：只监听本机的 HTTP API 与静态界面。
 - `web/`：中文页面编辑界面。
-- `windows_launcher.py`：Windows 启动窗口和后台服务生命周期。
+- `scripts/windows-native/`：Windows 原生编辑窗口、系统保存对话框和后台服务生命周期。
 - `scripts/MacApp.swift`：Mac 原生 WebKit 窗口和保存对话框。
 - `scripts/package_common.py`：按公开 Git 文件清单生成源码包并收集许可。
 - `tests/`：合成文件与本机接口测试。

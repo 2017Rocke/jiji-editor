@@ -10,7 +10,7 @@ sessionStorage.setItem('jiji-token', token);
 history.replaceState(null, '', location.pathname);
 let state={pages:[],revision:0}, current=0, selected=new Set(), tool='select', box=null, original=null, imageFile=null;
 let pendingAppend=false, busy=false, zoom=0, renderEpoch=0, thumbEpoch=0, dragging=false, start=null, points=[], dragPage=null;
-let pageURL=null, thumbURLs=[], toastTimer, dirtyLocal=false, nativeExportFull=false;
+let pageURL=null, thumbURLs=[], toastTimer, dirtyLocal=false, nativeExportFull=false, nativeExportPending=false, nativeExportRevision=null;
 let homeView=false, pendingTool=null;
 
 function toast(message,error=false){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').className=error?'error':'';$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,error?7500:3500)}
@@ -67,8 +67,32 @@ document.querySelectorAll('[data-tool]').forEach(e=>e.onclick=()=>selectTool(e.d
 $('selectAll').onclick=()=>{selected=selected.size===state.pages.length?new Set():new Set(state.pages.map((_,i)=>i));document.querySelectorAll('.thumb input').forEach((e,i)=>e.checked=selected.has(i));updateMeta()};
 $('rotateBtn').onclick=()=>edit({action:'rotate',pages:[...selected]});$('deleteBtn').onclick=()=>{if(confirm(`删除选中的 ${selected.size} 页？可以使用撤销恢复。`))edit({action:'delete',pages:[...selected]})};$('blankBtn').onclick=()=>edit({action:'blank',page:current});$('undoBtn').onclick=()=>edit({action:'undo'});$('redoBtn').onclick=()=>edit({action:'redo'});
 function move(direction){const order=state.pages.map((_,i)=>i),indices=[...selected].sort((a,b)=>direction<0?a-b:b-a);let nextSelected=new Set(selected);for(const idx of indices){const target=idx+direction;if(target>=0&&target<order.length&&!nextSelected.has(target)){[order[idx],order[target]]=[order[target],order[idx]];nextSelected.delete(idx);nextSelected.add(target)}}current=order.indexOf(current);selected=nextSelected;edit({action:'reorder',order})}$('moveUpBtn').onclick=()=>move(-1);$('moveDownBtn').onclick=()=>move(1);
-async function download(extract=false){await task(async()=>{const query=extract?`?pages=${[...selected].sort((a,b)=>a-b).join(',')}`:'';const blob=await api('/api/export'+query);const name=state.name.replace(/\.pdf$/i,'')+(extract?'_提取':'_吉吉编辑')+'.pdf';if(window.webkit?.messageHandlers?.saveFile){nativeExportFull=!extract;const data=await fileData(new File([blob],name));window.webkit.messageHandlers.saveFile.postMessage(data);return}const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);if(!extract){dirtyLocal=false;updateMeta()}toast('PDF 已交给浏览器保存，请查看下载列表')},'正在生成 PDF…')}
-window.jijiSaved=(saved)=>{if(saved){if(nativeExportFull)dirtyLocal=false;updateMeta();toast('PDF 已保存')}else toast('已取消保存，编辑内容仍在当前窗口')};
+async function download(extract=false){
+ if(nativeExportPending){toast('请先完成当前保存。');return}
+ await task(async()=>{
+  const query=extract?`?pages=${[...selected].sort((a,b)=>a-b).join(',')}`:'';
+  const blob=await api('/api/export'+query);
+  const name=state.name.replace(/\.pdf$/i,'')+(extract?'_提取':'_吉吉编辑')+'.pdf';
+  const macSave=window.webkit?.messageHandlers?.saveFile,windowsSave=window.chrome?.webview;
+  if(macSave||windowsSave){
+   const data=await fileData(new File([blob],name));
+   nativeExportFull=!extract;nativeExportRevision=state.revision;nativeExportPending=true;
+   try{if(macSave)macSave.postMessage(data);else windowsSave.postMessage({type:'saveFile',...data})}
+   catch(e){nativeExportPending=false;throw e}
+   return;
+  }
+  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  if(!extract){dirtyLocal=false;updateMeta()}
+  toast('PDF 已交给浏览器保存，请查看下载列表');
+ },'正在生成 PDF…');
+}
+window.jijiSaved=(saved)=>{
+ if(!nativeExportPending)return;
+ nativeExportPending=false;
+ if(saved){if(nativeExportFull&&state.revision===nativeExportRevision)dirtyLocal=false;updateMeta();toast('PDF 已保存')}
+ else toast('未保存文件，编辑内容仍在当前窗口');
+};
 $('exportBtn').onclick=()=>download();$('extractBtn').onclick=()=>download(true);
 $('zoomIn').onclick=()=>{if(!state.pages.length)return;zoom=Math.min(2.5,(zoom||$('pageSurface').clientWidth/state.pages[current].width)+.15);renderPage()};$('zoomOut').onclick=()=>{if(!state.pages.length)return;zoom=Math.max(.25,(zoom||$('pageSurface').clientWidth/state.pages[current].width)-.15);renderPage()};$('fitBtn').onclick=()=>{zoom=0;renderPage()};let resizeTimer;window.onresize=()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(!zoom)renderPage()},180)};
 $('aboutBtn').onclick=()=>$('aboutDialog').showModal();$('closeAbout').onclick=()=>$('aboutDialog').close();$('aboutDialog').onclick=e=>{if(e.target===$('aboutDialog'))$('aboutDialog').close()};document.querySelector('.brand').onclick=e=>{e.preventDefault();showHome()};

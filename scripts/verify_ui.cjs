@@ -77,7 +77,40 @@ let engine;
  await page.locator('#toast').waitFor({state:'hidden'});
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await page.screenshot({path:'output/05-mobile-home.png',fullPage:true});
+ // Exercise both desktop save bridges, including cancellation and edits made while saving.
+ await page.setViewportSize({width:1440,height:960});
+ for(const platform of ['windows','mac']){
+  await page.evaluate(platform=>{
+   window.__nativeSaves=[];
+   const receiver={postMessage:data=>window.__nativeSaves.push(data)};
+   window.chrome=window.chrome||{};
+   delete window.chrome.webview;delete window.webkit;
+   if(platform==='windows')window.chrome.webview=receiver;
+   else window.webkit={messageHandlers:{saveFile:receiver}};
+  },platform);
+  await page.click('#homeNav');await page.click('#sampleBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.click('#rotateBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.click('#exportBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  assert.strictEqual(await page.evaluate(()=>nativeExportPending),true);
+  assert.strictEqual(await page.evaluate(()=>window.__nativeSaves.length),1);
+  assert(await page.evaluate(()=>window.__nativeSaves[0].data.startsWith('JVBERi0')));
+  if(platform==='windows')assert.strictEqual(await page.evaluate(()=>window.__nativeSaves[0].type),'saveFile');
+  await page.click('#exportBtn');
+  assert.strictEqual(await page.evaluate(()=>window.__nativeSaves.length),1);
+  await page.evaluate(()=>window.jijiSaved(false));
+  assert.strictEqual(await page.evaluate(()=>dirtyLocal),true);
+  await page.click('#extractBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.evaluate(()=>window.jijiSaved(true));
+  assert.strictEqual(await page.evaluate(()=>dirtyLocal),true);
+  await page.click('#exportBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.click('#rotateBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.evaluate(()=>window.jijiSaved(true));
+  assert.strictEqual(await page.evaluate(()=>dirtyLocal),true);
+  await page.click('#exportBtn');await page.locator('#busy').waitFor({state:'hidden'});
+  await page.evaluate(()=>window.jijiSaved(true));
+  assert.strictEqual(await page.evaluate(()=>dirtyLocal),false);
+ }
  assert.deepStrictEqual(errors,[]);
- const report={passed:true,checks:['welcome','sample import','Chinese text placement','home preserves unsaved document','cancel sample replacement','resume editing','rotation','undo','crop','batch crop selected pages only','crop preview preserves selection','batch undo and redo','empty crop selection disabled','real PDF download','1080px layout','crop shortcut imports and selects tool','390px home layout'],pageErrors:errors};
+ const report={passed:true,checks:['welcome','sample import','Chinese text placement','home preserves unsaved document','cancel sample replacement','resume editing','rotation','undo','crop','batch crop selected pages only','crop preview preserves selection','batch undo and redo','empty crop selection disabled','real PDF download','1080px layout','crop shortcut imports and selects tool','390px home layout','Windows and Mac native save bridges','cancel preserves unsaved state','extract does not mark full document saved','pending export does not clear newer edits'],pageErrors:errors};
  fs.writeFileSync('output/ui-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));await browser.close();engine.kill();
 })().catch(e=>{console.error(e);if(engine)engine.kill();process.exit(1)});

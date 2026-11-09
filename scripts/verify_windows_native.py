@@ -1,0 +1,40 @@
+"""Verify the actual Windows desktop window and its embedded WebView2 renderer."""
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pymupdf as fitz
+from PIL import Image
+
+output = Path('output/native-windows').resolve()
+output.mkdir(parents=True, exist_ok=True)
+for name in ('native-verification.json', 'native-export.pdf', 'native-window.png'):
+    (output / name).unlink(missing_ok=True)
+process = subprocess.Popen([str(Path(sys.argv[1]).resolve()), '--verify-native', str(output)])
+try:
+    result = process.wait(timeout=150)
+except subprocess.TimeoutExpired:
+    process.kill()
+    process.wait()
+    raise RuntimeError('Windows desktop verification timed out') from None
+report_path = output / 'native-verification.json'
+if not report_path.exists():
+    raise RuntimeError(f'Windows desktop did not produce its verification report (exit {result})')
+report = json.loads(report_path.read_text(encoding='utf-8-sig'))
+checks = ('ready', 'embeddedWebView', 'batchCrop', 'undo', 'pdfExport',
+          'saveCancelledKeepsDirty', 'closeGuard')
+for check in checks:
+    if report.get(check) is not True:
+        raise AssertionError(f'Windows desktop check failed: {check}; {report.get("error", "no detail")}')
+if result != 0:
+    raise RuntimeError(f'Windows desktop verification exited with status {result}')
+with fitz.open(output / 'native-export.pdf') as document:
+    assert len(document) == 3, 'Native export lost pages'
+    assert all(page.rect.width > 0 and page.rect.height > 0 for page in document)
+with Image.open(output / 'native-window.png') as screenshot:
+    assert screenshot.width >= 900 and screenshot.height >= 600, 'Native window screenshot is incomplete'
+summary = {check: True for check in checks}
+summary['passed'] = True
+Path('output/native-windows-verification.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+print(json.dumps(summary))
