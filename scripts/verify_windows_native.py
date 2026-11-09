@@ -1,5 +1,6 @@
 """Exercise the packaged desktop, including real denied Windows directory ACLs."""
 from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
@@ -139,7 +140,10 @@ def assert_write_denied(directory):
             else:
                 probe.mkdir()
         except PermissionError as error:
-            assert error.winerror == 5, f'Expected Windows access denied, got {error.winerror}'
+            # Python's file-open CRT path keeps EACCES but may omit winerror;
+            # mkdir uses the Win32 path and normally supplies ERROR_ACCESS_DENIED.
+            assert error.winerror == 5 or (error.winerror is None and error.errno == errno.EACCES), \
+                f'Expected access denied, got winerror={error.winerror}, errno={error.errno}'
         else:
             if operation == 'file':
                 probe.unlink()
