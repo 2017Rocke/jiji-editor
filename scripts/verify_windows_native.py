@@ -168,9 +168,10 @@ def denied_storage_fixture(output_parent):
             # triggered by the write denial rather than by a broadly readable ACL.
             acl_command(directory, '/inheritance:r', '/grant:r',
                         f'*{sid}:(OI)(CI)(F)', '*S-1-5-18:(OI)(CI)(F)', '/q')
-            # W denies file/directory creation and data/attribute writes. It does not
-            # deny reading the ACL or changing it during cleanup. No elevation needed.
-            acl_command(directory, '/deny', f'*{sid}:(OI)(CI)(W)', '/q')
+            # Deny only data/append/attribute writes, including file and directory
+            # creation. Generic W also denies SYNCHRONIZE, breaking read/list calls.
+            # Keep read/control rights so the app reaches its actual write probe.
+            acl_command(directory, '/deny', f'*{sid}:(OI)(CI)(WD,AD,WEA,WA)', '/q')
             assert_write_denied(directory)
         yield primary, temporary, fallback
     finally:
