@@ -5,7 +5,6 @@ import argparse
 import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import mimetypes
 import os
 from pathlib import Path
 import secrets
@@ -17,6 +16,13 @@ import webbrowser
 from jiji.engine import Workspace, UserError, sample_pdf
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+STATIC_TYPES = {
+    "/": "text/html; charset=utf-8",
+    "/index.html": "text/html; charset=utf-8",
+    "/style.css": "text/css; charset=utf-8",
+    "/app.js": "text/javascript; charset=utf-8",
+    "/icon.svg": "image/svg+xml",
+}
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -83,9 +89,10 @@ class Handler(BaseHTTPRequestHandler):
                     pages = query.get("pages", [None])[0]
                     selected = [int(p) for p in pages.split(",")] if pages is not None else None
                     self.respond(work.export(selected), kind="application/pdf")
-                elif route.path in {"/", "/index.html", "/style.css", "/app.js", "/icon.svg"}:
+                elif route.path in STATIC_TYPES:
                     file = ROOT / "web" / ("index.html" if route.path == "/" else route.path.lstrip("/"))
-                    self.respond(file.read_bytes(), kind=mimetypes.guess_type(file)[0] or "application/octet-stream")
+                    # Windows file associations must not override browser resource types.
+                    self.respond(file.read_bytes(), kind=STATIC_TYPES[route.path])
                 else:
                     self.respond({"error": "未找到页面。"}, 404)
         except UserError as e:

@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import mimetypes
 from pathlib import Path
 import tempfile
 import threading
@@ -227,6 +228,28 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.request("/api/state", **kwargs)
             self.assertEqual(ctx.exception.code, code)
+
+    def test_static_types_ignore_system_file_associations(self):
+        # Windows registry associations may advertise JS/CSS/HTML as plain text.
+        mimetypes.init()
+        extensions = [".js", ".css", ".html", ".svg"]
+        before = {ext: mimetypes.types_map.get(ext) for ext in extensions}
+        try:
+            for ext in extensions:
+                mimetypes.add_type("text/plain", ext)
+            for route, expected in [("/", "text/html"), ("/index.html", "text/html"),
+                                    ("/app.js", "text/javascript"), ("/style.css", "text/css"),
+                                    ("/icon.svg", "image/svg+xml")]:
+                with self.subTest(route=route), self.request(route, token=False) as response:
+                    self.assertEqual(response.headers.get_content_type(), expected)
+                    self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                    self.assertGreater(len(response.read()), 0)
+        finally:
+            for ext, kind in before.items():
+                if kind is None:
+                    mimetypes.types_map.pop(ext, None)
+                else:
+                    mimetypes.add_type(kind, ext)
 
     def test_full_http_workflow(self):
         with self.request("/api/open", {"files": [file_item(fixture())]}) as r:

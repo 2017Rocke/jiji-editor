@@ -36,7 +36,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python scripts\verify_windows_launcher.py output\JijiEditor-Windows-x64\JijiEditor.exe
 ```
 
-打包后的 EXE 有两种测试模式：`--no-browser` 用于验证 PDF 服务；`--verify-launcher` 用于验证随包 tkinter 启动窗口。常规双击自动打开默认浏览器。
+打包后的 EXE 有两种测试模式：`--no-browser` 用于验证 PDF 服务；`--verify-launcher` 会模拟浏览器启动失败，验证随包 tkinter 窗口的失败提示、可手动打开的地址和复制按钮。常规双击请求默认浏览器打开；失败后可选择其他浏览器或复制地址。
 
 ## 浏览器与 Office 验证
 
@@ -49,6 +49,14 @@ node scripts/verify_ui.cjs
 ```
 
 可用 `JIJI_CHROME` 指定现有 Chromium/Chrome，`JIJI_PYTHON` 指定 Python。
+
+发布流程会把 Windows ZIP 解压到含中文和空格的目录，再验证其中的 EXE。打包浏览器验证可单独运行：
+
+```sh
+node scripts/verify_packaged_browser.cjs "解压目录/JijiEditor-Windows-x64/JijiEditor.exe"
+```
+
+此项验证真实浏览器中的脚本与样式、示例文档、批量裁剪、整批撤销及 PDF 下载，并生成不含会话地址的结果和截图。它不代表覆盖所有用户电脑的浏览器关联或系统限制；启动器还保留手动复制地址入口。
 
 Office 验证需要免费 LibreOffice，并安装测试依赖：
 

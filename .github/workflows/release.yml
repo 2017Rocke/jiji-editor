@@ -35,12 +35,42 @@ jobs:
       - name: Build Windows portable package
         if: runner.os == 'Windows'
         run: python scripts/build_windows.py
+      - name: Extract the actual Windows ZIP into a path with spaces and Chinese characters
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $destination = Join-Path $env:RUNNER_TEMP '吉吉 安装包验证'
+          Expand-Archive -LiteralPath "output/JijiEditor-$version-Windows-x64.zip" -DestinationPath $destination -Force
+          $executable = Join-Path $destination 'JijiEditor-Windows-x64/JijiEditor.exe'
+          if (-not (Test-Path -LiteralPath $executable)) { throw 'The Windows ZIP is missing its executable' }
+          "JIJI_PACKAGED_EXE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify Windows EXE
         if: runner.os == 'Windows'
-        run: python scripts/verify_packaged.py output/JijiEditor-Windows-x64/JijiEditor.exe
+        run: python scripts/verify_packaged.py "$env:JIJI_PACKAGED_EXE"
       - name: Verify Windows desktop launcher
         if: runner.os == 'Windows'
-        run: python scripts/verify_windows_launcher.py output/JijiEditor-Windows-x64/JijiEditor.exe
+        run: python scripts/verify_windows_launcher.py "$env:JIJI_PACKAGED_EXE"
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: '22'
+      - name: Install the browser verifier
+        if: runner.os == 'Windows'
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install chromium
+      - name: Verify packaged Windows browser interactions
+        if: runner.os == 'Windows'
+        run: node scripts/verify_packaged_browser.cjs "$env:JIJI_PACKAGED_EXE"
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && always()
+        with:
+          name: Windows-browser-verification
+          path: |
+            output/packaged-browser-verification.json
+            output/packaged-browser-verification.png
+          if-no-files-found: warn
       - name: Build Mac application
         if: runner.os == 'macOS'
         env:

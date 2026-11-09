@@ -35,6 +35,12 @@ with tempfile.TemporaryDirectory(prefix="jiji-package-test-") as temp:
                 return json.loads(result) if "json" in response.headers.get("Content-Type", "") else result
         html = api("/").decode()
         assert "吉吉编辑软件" in html
+        for route, expected in [("/", "text/html"), ("/index.html", "text/html"),
+                                ("/app.js", "text/javascript"), ("/style.css", "text/css"),
+                                ("/icon.svg", "image/svg+xml")]:
+            with urllib.request.urlopen(origin + route, timeout=30) as response:
+                assert response.headers.get_content_type() == expected, route
+                assert response.headers["X-Content-Type-Options"] == "nosniff", route
         state = api("/api/sample", {})
         assert len(state["pages"]) == 3
         state = api("/api/edit", {"action": "text", "page": 0, "rect": [.08, .78, .9, .88], "text": "跨平台打包验证", "size": 18, "revision": state["revision"]})
@@ -53,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="jiji-package-test-") as temp:
         state = api("/api/edit", {"action": "undo", "revision": state["revision"]})
         assert [(p["width"], p["height"]) for p in state["pages"]] == before
         assert "payload.pages=[...selected]" in api("/app.js").decode()
-        report = {"batchCrop": True, "batchUndo": True, "passed": True, "pages": 3, "chineseText": True, "render": True, "export": True}
+        report = {"staticContentTypes": True, "batchCrop": True, "batchUndo": True, "passed": True, "pages": 3, "chineseText": True, "render": True, "export": True}
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report))
