@@ -1,0 +1,2 @@
+# Preserve Microsoft's downloaded license byte-for-byte for its pinned SHA-256.
+scripts/windows-native/licenses/WebView2-Fixed-Runtime-LICENSE.html -text
