@@ -21,6 +21,7 @@ namespace JijiEditor
         }
 
         internal bool HasExited => process.HasExited;
+        internal int? ExitCode => process.HasExited ? process.ExitCode : (int?)null;
         internal int WaitForExit() { process.WaitForExit(); return process.ExitCode; }
 
         internal static EngineProcess Start(string[] arguments)

@@ -34,13 +34,15 @@ namespace JijiEditor
         private readonly Button recoveryExport = new Button { Text = "导出当前 PDF", Dock = DockStyle.Bottom,
             Height = 58, Font = new Font("Microsoft YaHei UI", 12) };
         private readonly string verificationDirectory;
+        private readonly StartupDiagnosticContext startup = new StartupDiagnosticContext();
         private readonly Dictionary<string, object> report = new Dictionary<string, object>
         {
             ["passed"] = false, ["ready"] = false, ["embeddedWebView"] = false,
             ["batchCrop"] = false, ["undo"] = false, ["pdfExport"] = false,
             ["saveCancelledKeepsDirty"] = false, ["closeGuard"] = false,
             ["recoverySaveCancelledKeepsDirty"] = false, ["recoveryPdfExport"] = false,
-            ["recoveryCloseGuard"] = false, ["selfContainedDotNet"] = false, ["bundledWebView2"] = false
+            ["recoveryCloseGuard"] = false, ["selfContainedDotNet"] = false, ["bundledWebView2"] = false,
+            ["startupDiagnostics"] = false
         };
         private EngineProcess engine;
         private string sessionDirectory, localOrigin, sessionToken, verificationStage = "startup";
@@ -96,7 +98,11 @@ namespace JijiEditor
                 }
                 var profileRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "JijiEditor", "WebView2");
-                var runtime = BundledRuntime.Prepare(profileRoot, out var profile, report);
+                var runtime = BundledRuntime.Prepare(profileRoot, out var profile, report, stage => startup.Stage = stage);
+                startup.Stage = StartupStage.ProfileDirectory;
+                BundledRuntime.EnsureProfileWritable(profile);
+                startup.ProfileWritable = true;
+                startup.Stage = StartupStage.SessionDirectory;
                 sessionDirectory = Path.Combine(Path.GetTempPath(), "jiji-session-" + Guid.NewGuid().ToString("N"));
                 var security = new DirectorySecurity();
                 security.SetAccessRuleProtection(true, false);
@@ -106,12 +112,18 @@ namespace JijiEditor
                 Directory.CreateDirectory(sessionDirectory);
                 new DirectoryInfo(sessionDirectory).SetAccessControl(security);
                 var urlFile = Path.Combine(sessionDirectory, "editor.url");
+                startup.Stage = StartupStage.BackendStart;
                 engine = EngineProcess.Start(new[] { "--no-browser", "--url-file", urlFile });
+                startup.Stage = StartupStage.BackendHandshake;
                 string url = null;
                 var timeout = Stopwatch.StartNew();
                 while (!disposed && timeout.ElapsedMilliseconds < 45000)
                 {
-                    if (engine.HasExited) throw new InvalidOperationException("编辑组件未能启动，请重新解压安装包。");
+                    if (engine.HasExited)
+                    {
+                        startup.BackendExitCode = engine.ExitCode;
+                        throw new InvalidOperationException("Backend exited before its startup handshake.");
+                    }
                     try { if (File.Exists(urlFile)) url = File.ReadAllText(urlFile).Trim(); } catch (IOException) { }
                     if (!string.IsNullOrWhiteSpace(url)) break;
                     await Task.Delay(100);
@@ -126,12 +138,16 @@ namespace JijiEditor
                 sessionToken = Uri.UnescapeDataString(uri.Fragment.Substring("#token=".Length));
                 // The URL file is only a startup handshake and contains the session secret.
                 File.Delete(urlFile);
+                startup.Stage = StartupStage.WebViewEnvironment;
                 var environment = await WithTimeout(CoreWebView2Environment.CreateAsync(runtime, profile), 45000);
                 if (disposed) return;
+                startup.Stage = StartupStage.WebViewController;
                 await WithTimeout(web.EnsureCoreWebView2Async(environment), 45000);
                 if (disposed) return;
                 var core = web.CoreWebView2;
+                startup.Stage = StartupStage.BrowserCheck;
                 BundledRuntime.VerifyBrowser(core.BrowserProcessId, environment.BrowserVersionString, report);
+                startup.Stage = StartupStage.BrowserSettings;
                 core.Settings.AreDevToolsEnabled = false;
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.AreBrowserAcceleratorKeysEnabled = false;
@@ -150,11 +166,18 @@ namespace JijiEditor
                     if (disposed || recovering) return;
                     if (!e.IsSuccess)
                     {
-                        if (verificationDirectory == null && editorReady) ShowRecovery();
+                        startup.Stage = StartupStage.InitialNavigation;
+                        startup.NavigationError = e.WebErrorStatus;
+                        if (verificationDirectory == null && editorReady)
+                        {
+                            StartupDiagnostics.Write(startup, null);
+                            ShowRecovery();
+                        }
                         else Fail("editor-navigation");
                         return;
                     }
                     editorReady = true;
+                    startup.Stage = StartupStage.Ready;
                     loading.Hide();
                     if (verificationDirectory != null && !verificationStarted)
                     {
@@ -165,28 +188,31 @@ namespace JijiEditor
                 core.ProcessFailed += (sender, e) =>
                 {
                     if (disposed) return;
-                    if (verificationDirectory != null) { Fail("editor-process"); return; }
+                    startup.ProcessFailure = e.ProcessFailedKind;
+                    if (verificationDirectory != null)
+                    {
+                        startup.Stage = StartupStage.BrowserProcess;
+                        Fail("editor-process");
+                        return;
+                    }
                     // WebView2 restarts GPU/utility/frame child processes itself. Keep the
                     // document service alive even if the main browser/renderer is lost.
                     if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited ||
                         e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited ||
                         e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                    {
+                        startup.Stage = StartupStage.BrowserProcess;
+                        if (!editorReady) { Fail("editor-process"); return; }
+                        StartupDiagnostics.Write(startup, null);
                         ShowRecovery();
+                    }
                 };
+                startup.Stage = StartupStage.InitialNavigation;
                 core.Navigate(url);
             }
             catch (Exception exception)
             {
-                if (!disposed && !recovering)
-                {
-                    if (verificationDirectory == null && exception is BundledRuntimeException)
-                    {
-                        MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        ExitCode = 1;
-                        Finish(false);
-                    }
-                    else Fail("initialization", exception);
-                }
+                if (!disposed && !recovering) Fail("initialization", exception);
             }
         }
 
@@ -446,6 +472,8 @@ namespace JijiEditor
         {
             try
             {
+                verificationStage = "startup-diagnostics";
+                VerifyStartupDiagnostics();
                 verificationStage = "ready";
                 await WaitForScript("typeof api === 'function' && typeof state === 'object' && document.body.classList.contains('is-home')");
                 report["ready"] = true;
@@ -525,6 +553,49 @@ namespace JijiEditor
             catch (Exception exception) { if (!disposed) Fail(verificationStage, exception); }
         }
 
+        private void VerifyStartupDiagnostics()
+        {
+            if (verificationDirectory == null) throw new InvalidOperationException();
+            var blocked = Path.Combine(verificationDirectory, "diagnostics-write-blocked");
+            var fallback = Path.Combine(verificationDirectory, "diagnostics-fallback");
+            File.WriteAllText(blocked, "The preferred diagnostics directory is intentionally unavailable.");
+            try
+            {
+                var profileRejected = false;
+                try { BundledRuntime.EnsureProfileWritable(blocked); }
+                catch (IOException) { profileRejected = true; }
+                if (!profileRejected || !startup.ProfileWritable) throw new InvalidOperationException();
+                const string privateMessage = @"DIAGNOSTIC_TOKEN_SENTINEL private-invoice.pdf C:\Users\SensitiveProfile\Documents\private-invoice.pdf http://127.0.0.1:12345/#token=DIAGNOSTIC_TOKEN_SENTINEL";
+                var injected = new InvalidOperationException(privateMessage,
+                    new System.ComponentModel.Win32Exception(5, privateMessage));
+                var context = new StartupDiagnosticContext { Stage = StartupStage.ProfileDirectory };
+                var result = StartupDiagnostics.Write(context, injected, blocked, fallback);
+                if (result.Path == null || !result.UsedTemporaryDirectory) throw new InvalidOperationException();
+                if (!result.CopyText.Contains("\"components\"", StringComparison.Ordinal) ||
+                    !result.CopyText.Contains("\"nativeErrorCode\"", StringComparison.Ordinal)) throw new InvalidDataException();
+                var content = File.ReadAllText(result.Path);
+                foreach (var sensitive in new[] { "DIAGNOSTIC_TOKEN_SENTINEL", "private-invoice.pdf", "SensitiveProfile", "127.0.0.1", "token=" })
+                    if (content.Contains(sensitive, StringComparison.Ordinal) || result.CopyText.Contains(sensitive, StringComparison.Ordinal))
+                        throw new InvalidDataException();
+                using var parsed = JsonDocument.Parse(content);
+                var data = parsed.RootElement;
+                if (data.GetProperty("schemaVersion").GetInt32() != 1 || data.GetProperty("stage").GetString() != "profile-directory" ||
+                    data.GetProperty("storage").GetString() != "temporary" || data.GetProperty("profileWritable").GetBoolean() ||
+                    data.GetProperty("exceptions").GetArrayLength() != 2 ||
+                    data.GetProperty("exceptions")[1].GetProperty("nativeErrorCode").GetInt32() != 5 ||
+                    data.GetProperty("operatingSystem").GetProperty("build").GetUInt32() == 0)
+                    throw new InvalidDataException();
+                File.Copy(result.Path, Path.Combine(verificationDirectory, "native-startup-diagnostic.json"), true);
+                File.Delete(result.Path);
+                report["startupDiagnostics"] = true;
+            }
+            finally
+            {
+                File.Delete(blocked);
+                if (Directory.Exists(fallback)) Directory.Delete(fallback, true);
+            }
+        }
+
         private async Task WaitForSave(int previous)
         {
             var timer = Stopwatch.StartNew();
@@ -536,9 +607,11 @@ namespace JijiEditor
         {
             if (disposed) return;
             ExitCode = 1;
+            try { if (engine != null) startup.BackendExitCode = engine.ExitCode; } catch { }
             if (verificationDirectory != null)
             {
                 report["error"] = "Native verification failed: " + stage;
+                report["startupFailure"] = StartupDiagnostics.Create(startup, exception);
                 if (exception != null)
                 {
                     // Exception messages can contain the token-bearing local URL; never persist them.
@@ -546,9 +619,7 @@ namespace JijiEditor
                     report["hResult"] = "0x" + exception.HResult.ToString("X8");
                 }
             }
-            else MessageBox.Show(this,
-                "编辑器未能正常启动或已意外停止。请完整解压最新版安装包后重试。\n\n如果问题仍然存在，请反馈 Windows 版本和此提示。",
-                Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else StartupDiagnostics.Show(this, StartupDiagnostics.Write(startup, exception));
             Finish(false);
         }
 

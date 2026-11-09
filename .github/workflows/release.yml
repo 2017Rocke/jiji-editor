@@ -52,6 +52,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $engine)) { throw 'The Windows ZIP is missing its PDF engine' }
           "JIJI_PACKAGED_EXE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "JIJI_PACKAGED_ENGINE=$engine" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($version -eq '0.3.2') { 'JIJI_BUILD_STARTUP_UPDATE=true' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append }
       - name: Verify packaged Windows PDF engine
         if: runner.os == 'Windows'
         run: python scripts/verify_packaged.py "$env:JIJI_PACKAGED_ENGINE"
@@ -64,6 +65,36 @@ jobs:
         with:
           name: Windows-native-verification
           path: output/native-*
+          if-no-files-found: warn
+      - name: Build and verify the small startup update against the published v0.3.1 package
+        if: runner.os == 'Windows' && env.JIJI_BUILD_STARTUP_UPDATE == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $previousZip = Join-Path $env:RUNNER_TEMP 'JijiEditor-0.3.1-Windows-x64.zip'
+          Invoke-WebRequest -Uri 'https://github.com/2017Rocke/jiji-editor/releases/download/v0.3.1/JijiEditor-0.3.1-Windows-x64.zip' -OutFile $previousZip
+          if ((Get-FileHash -LiteralPath $previousZip -Algorithm SHA256).Hash -ne '940f3da83dc8bc45691d579138151c68fedaa825a3a9e50cfd8066e571d4749e') {
+            throw 'The previous release package does not match its published SHA-256'
+          }
+          $previousRoot = Join-Path $env:RUNNER_TEMP '吉吉 启动更新验证'
+          Expand-Archive -LiteralPath $previousZip -DestinationPath $previousRoot -Force
+          $previousPackage = Join-Path $previousRoot 'JijiEditor-Windows-x64'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $update = "output/JijiEditor-$version-Windows-startup-update.zip"
+          python scripts/build_windows_startup_update.py $previousPackage (Split-Path -Parent $env:JIJI_PACKAGED_EXE) --output $update
+          if ($LASTEXITCODE -ne 0) { throw 'The startup update is not compatible with the previous package' }
+          Expand-Archive -LiteralPath $update -DestinationPath $previousPackage -Force
+          python scripts/verify_windows_native.py (Join-Path $previousPackage 'JijiEditor.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'The patched previous package did not pass native verification' }
+          Copy-Item -LiteralPath 'output/native-windows' -Destination 'output/native-startup-update' -Recurse
+          Copy-Item -LiteralPath 'output/native-windows-verification.json' -Destination 'output/native-startup-update-verification.json'
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && env.JIJI_BUILD_STARTUP_UPDATE == 'true' && always()
+        with:
+          name: Windows-startup-update-verification
+          path: |
+            output/native-startup-update*
+            output/startup-update-verification.json
           if-no-files-found: warn
       - uses: actions/setup-node@v4
         if: runner.os == 'Windows'

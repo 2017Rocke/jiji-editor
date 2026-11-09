@@ -13,12 +13,15 @@ namespace JijiEditor
     /// <summary>Use only the application-local runtimes, including on a clean offline PC.</summary>
     internal static class BundledRuntime
     {
-        internal static string Prepare(string profileRoot, out string profile, IDictionary<string, object> report)
+        internal static string Prepare(string profileRoot, out string profile, IDictionary<string, object> report,
+            Action<StartupStage> stageChanged = null)
         {
+            stageChanged?.Invoke(StartupStage.RuntimePreparation);
             var application = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
             if (new Uri(application).IsUnc || new DriveInfo(Path.GetPathRoot(application)).DriveType == DriveType.Network)
-                throw new BundledRuntimeException("请把完整的吉吉软件文件夹复制到电脑本地磁盘后再打开，不能直接从网络共享目录运行。");
+                throw new BundledRuntimeException("请把完整的吉吉软件文件夹复制到电脑本地磁盘后再打开，不能直接从网络共享目录运行。", BundledRuntimeFailure.NetworkLocation);
 
+            stageChanged?.Invoke(StartupStage.DotNetRuntime);
             foreach (var file in new[] { "coreclr.dll", "hostfxr.dll", "System.Private.CoreLib.dll", "System.Windows.Forms.dll" })
                 if (!File.Exists(Path.Combine(application, file))) throw IncompletePackage();
             string clrModule = null;
@@ -34,6 +37,7 @@ namespace JijiEditor
             report["dotnetRuntimeDirectory"] = Path.GetRelativePath(application, runtimeDirectory);
             report["dotnetRuntimeModule"] = Path.GetRelativePath(application, clrModule);
 
+            stageChanged?.Invoke(StartupStage.RuntimeManifest);
             var runtime = Path.Combine(application, "webview2");
             var executable = Path.Combine(runtime, "msedgewebview2.exe");
             var manifest = Path.Combine(application, "webview2-runtime.json");
@@ -48,9 +52,10 @@ namespace JijiEditor
             }
             catch (Exception exception) when (exception is JsonException || exception is KeyNotFoundException ||
                                                exception is InvalidOperationException || exception is IOException)
-            { throw IncompletePackage(); }
+            { throw new BundledRuntimeException("软件包内的显示组件清单无法读取。", exception, BundledRuntimeFailure.ManifestUnreadable); }
             if (string.IsNullOrWhiteSpace(fixedVersion)) throw IncompletePackage();
             report["bundledWebView2ExpectedVersion"] = fixedVersion;
+            stageChanged?.Invoke(StartupStage.RuntimePermissions);
             EnsureAppContainerReadAccess(runtime);
             // Different fixed versions must not downgrade or share an Evergreen profile.
             profile = Path.Combine(profileRoot, "Fixed-" + fixedVersion);
@@ -69,6 +74,27 @@ namespace JijiEditor
             return runtime;
         }
 
+        internal static void EnsureProfileWritable(string profile)
+        {
+            Directory.CreateDirectory(profile);
+            var probe = Path.Combine(profile, ".jiji-profile-check-" + Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                using (var file = new FileStream(probe, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                {
+                    file.WriteByte(0x4A);
+                    file.Flush(true);
+                    file.Position = 0;
+                    if (file.ReadByte() != 0x4A) throw new IOException("Profile directory verification failed.");
+                }
+                File.Delete(probe);
+            }
+            finally
+            {
+                try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+            }
+        }
+
         internal static void VerifyBrowser(uint processId, string version, IDictionary<string, object> report)
         {
             var application = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
@@ -78,7 +104,7 @@ namespace JijiEditor
             var matches = string.Equals(Path.GetFullPath(actual), expected, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(version, (string)report["bundledWebView2ExpectedVersion"], StringComparison.Ordinal);
             report["bundledWebView2"] = matches;
-            if (!matches) throw new BundledRuntimeException("吉吉未能加载软件包内的显示组件。请重新下载并完整解压最新版安装包后再打开。");
+            if (!matches) throw new BundledRuntimeException("吉吉未能加载软件包内的显示组件。请重新下载并完整解压最新版安装包后再打开。", BundledRuntimeFailure.RuntimeMismatch);
             report["webView2RuntimeVersion"] = version;
             report["webView2Executable"] = Path.GetRelativePath(application, actual);
         }
@@ -113,7 +139,7 @@ namespace JijiEditor
             catch (Exception exception) when (exception is UnauthorizedAccessException || exception is IOException ||
                                                exception is System.Security.SecurityException)
             {
-                throw new BundledRuntimeException("无法准备软件包内的显示组件。请把整个安装包重新解压到本机“下载”或“桌面”等你可以修改的文件夹后打开。无需安装其他运行组件。");
+                throw new BundledRuntimeException("无法准备软件包内的显示组件读取权限。", exception, BundledRuntimeFailure.RuntimePermissions);
             }
         }
 
@@ -127,11 +153,15 @@ namespace JijiEditor
         }
 
         private static BundledRuntimeException IncompletePackage() => new BundledRuntimeException(
-            "软件包内的运行组件不完整。请重新下载最新版安装包并完整解压，保留所有文件和 webview2、backend 文件夹，再打开 JijiEditor.exe。无需另外安装 .NET 或 WebView2。");
+            "软件包内的运行组件不完整。请重新下载最新版安装包并完整解压，保留所有文件和 webview2、backend 文件夹，再打开 JijiEditor.exe。无需另外安装 .NET 或 WebView2。", BundledRuntimeFailure.IncompletePackage);
     }
+
+    internal enum BundledRuntimeFailure { Unknown, NetworkLocation, IncompletePackage, RuntimeMismatch, RuntimePermissions, ManifestUnreadable }
 
     internal sealed class BundledRuntimeException : Exception
     {
-        internal BundledRuntimeException(string message) : base(message) { }
+        internal BundledRuntimeFailure Reason { get; }
+        internal BundledRuntimeException(string message, BundledRuntimeFailure reason = BundledRuntimeFailure.Unknown) : base(message) { Reason = reason; }
+        internal BundledRuntimeException(string message, Exception inner, BundledRuntimeFailure reason = BundledRuntimeFailure.Unknown) : base(message, inner) { Reason = reason; }
     }
 }

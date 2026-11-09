@@ -46,6 +46,12 @@ Windows 10 使用 Fixed Runtime 120 及以后版本需要 AppContainer 的读取
 
 Fixed Runtime 不自动更新。发布维护时应从微软官方稳定版来源刷新锁定文件、下载校验值和许可，重新运行完整 Windows 验证后发布新版。
 
+启动诊断按运行组件核验、权限、用户目录、后台启动/握手、WebView2 环境/窗口创建和首屏加载分别记录阶段。系统 build 使用 `RtlGetVersion`，补丁修订号读取 UBR；异常只记录类型、HRESULT 与内层 Win32 错误码，不序列化异常消息、堆栈、会话地址或文档路径。原生验证会注入不可用目录和包含私密字段的异常，核对目录检查、临时目录回退、内层错误保留及报告过滤。
+
+v0.3.2 另生成只适用于 v0.3.1 的小型启动更新。`scripts/build_windows_startup_update.py` 接收旧版与新版完整解压目录，在 .NET 框架版本、依赖图、实际运行依赖文件和 Fixed Runtime 文件全部匹配后才生成更新 ZIP。发布流程下载并校验公开 v0.3.1 包，将更新实际覆盖到旧包，再运行完整原生验证。更新保留旧 backend、VERSION 与 Source.zip，新启动器源码命名为 Startup-update-Source.zip，因此编辑页版本仍为 0.3.1。该专用步骤仅在 VERSION 为 0.3.2 时运行。
+
+现有自动化验证平台是 Windows Server 2022，不覆盖 Windows 10 1809 实机。没有目标机器的具体错误码前，不将通用初始化失败归因为某个 WebView2 版本，也不宣称诊断更新已修复所有旧系统启动问题。
+
 ## 浏览器与 Office 验证
 
 浏览器测试需要 Node.js 和 Playwright。安装在项目内即可，不依赖任何特定人的电脑路径：
