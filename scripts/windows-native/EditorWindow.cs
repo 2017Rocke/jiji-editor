@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -23,17 +24,27 @@ namespace JijiEditor
             Text = "吉吉编辑软件\n\n正在准备编辑器…", Font = new Font("Microsoft YaHei UI", 16),
             BackColor = Color.FromArgb(247, 246, 239), ForeColor = Color.FromArgb(39, 72, 59)
         };
+        private readonly Panel recovery = new Panel { Dock = DockStyle.Fill, Visible = false,
+            BackColor = Color.FromArgb(247, 246, 239) };
+        private readonly Label recoveryText = new Label { Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Microsoft YaHei UI", 14),
+            ForeColor = Color.FromArgb(39, 72, 59) };
+        private readonly Button recoveryExport = new Button { Text = "导出当前 PDF", Dock = DockStyle.Bottom,
+            Height = 58, Font = new Font("Microsoft YaHei UI", 12) };
         private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 268435456 };
         private readonly string verificationDirectory;
         private readonly Dictionary<string, object> report = new Dictionary<string, object>
         {
             ["passed"] = false, ["ready"] = false, ["embeddedWebView"] = false,
             ["batchCrop"] = false, ["undo"] = false, ["pdfExport"] = false,
-            ["saveCancelledKeepsDirty"] = false, ["closeGuard"] = false
+            ["saveCancelledKeepsDirty"] = false, ["closeGuard"] = false,
+            ["recoverySaveCancelledKeepsDirty"] = false, ["recoveryPdfExport"] = false,
+            ["recoveryCloseGuard"] = false
         };
         private EngineProcess engine;
-        private string sessionDirectory, localOrigin, verificationStage = "startup";
+        private string sessionDirectory, localOrigin, sessionToken, verificationStage = "startup";
         private bool allowClose, closePending, saving, disposed, verificationStarted;
+        private bool editorReady, recovering, recoverySaved;
         private int verificationSaveMode, saveCompletions;
         private bool lastSaveResult;
         private Timer deadline;
@@ -44,14 +55,29 @@ namespace JijiEditor
             this.verificationDirectory = verificationDirectory;
             Text = "吉吉编辑软件";
             ClientSize = new Size(1360, 875);
-            MinimumSize = new Size(1020, 720);
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
+            var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+            MinimumSize = new Size(Math.Min(1020, workingArea.Width), Math.Min(720, workingArea.Height));
+            Size = new Size(Math.Min(Width, workingArea.Width), Math.Min(Height, workingArea.Height));
             try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             Controls.Add(web);
             Controls.Add(loading);
+            recovery.Padding = new Padding(48);
+            recovery.Controls.Add(recoveryText);
+            recovery.Controls.Add(recoveryExport);
+            recoveryExport.Click += async (sender, e) => await ExportRecoveryAsync();
+            Controls.Add(recovery);
             loading.BringToFront();
-            Shown += async (sender, e) => await InitializeAsync();
+            Shown += async (sender, e) =>
+            {
+                // Reapply after WinForms DPI scaling, including small laptop displays.
+                var area = Screen.FromControl(this).WorkingArea;
+                MinimumSize = new Size(Math.Min(1020, area.Width), Math.Min(720, area.Height));
+                Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
+                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
+                await InitializeAsync();
+            };
             FormClosing += WindowClosing;
             FormClosed += (sender, e) => Shutdown();
         }
@@ -93,6 +119,7 @@ namespace JijiEditor
                     !uri.Fragment.StartsWith("#token=", StringComparison.Ordinal) || uri.Fragment.Length < 16)
                     throw new InvalidOperationException("编辑组件启动超时，请关闭软件后重试。");
                 localOrigin = uri.GetLeftPart(UriPartial.Authority);
+                sessionToken = Uri.UnescapeDataString(uri.Fragment.Substring("#token=".Length));
                 // The URL file is only a startup handshake and contains the session secret.
                 File.Delete(urlFile);
                 var profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -115,8 +142,14 @@ namespace JijiEditor
                 core.WebMessageReceived += SaveMessageReceived;
                 core.NavigationCompleted += async (sender, e) =>
                 {
-                    if (disposed) return;
-                    if (!e.IsSuccess) { Fail("editor-navigation"); return; }
+                    if (disposed || recovering) return;
+                    if (!e.IsSuccess)
+                    {
+                        if (verificationDirectory == null && editorReady) ShowRecovery();
+                        else Fail("editor-navigation");
+                        return;
+                    }
+                    editorReady = true;
                     loading.Hide();
                     if (verificationDirectory != null && !verificationStarted)
                     {
@@ -124,12 +157,83 @@ namespace JijiEditor
                         await VerifyAsync();
                     }
                 };
-                core.ProcessFailed += (sender, e) => { if (!disposed) Fail("editor-process"); };
+                core.ProcessFailed += (sender, e) =>
+                {
+                    if (disposed) return;
+                    if (verificationDirectory != null) { Fail("editor-process"); return; }
+                    // WebView2 restarts GPU/utility/frame child processes itself. Keep the
+                    // document service alive even if the main browser/renderer is lost.
+                    if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited ||
+                        e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited ||
+                        e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                        ShowRecovery();
+                };
                 core.Navigate(url);
             }
             catch (Exception exception)
             {
-                if (!disposed) Fail("initialization", exception);
+                if (!disposed && !recovering) Fail("initialization", exception);
+            }
+        }
+
+        private void ShowRecovery()
+        {
+            if (disposed || recovering) return;
+            recovering = true;
+            recoverySaved = false;
+            web.Hide();
+            loading.Hide();
+            recoveryText.Text = "编辑窗口暂时无法显示。\n\n文档仍保留在当前会话中，请先导出 PDF 保存。\n\n保存后可以关闭并重新打开吉吉编辑软件。";
+            recovery.Show();
+            recovery.BringToFront();
+        }
+
+        private async Task ExportRecoveryAsync()
+        {
+            if (disposed || !recovering || saving) return;
+            saving = true;
+            recoveryExport.Enabled = false;
+            try
+            {
+                // This path deliberately does not use the failed renderer or a JS callback.
+                byte[] bytes;
+                using (var client = new RecoveryPdfClient())
+                {
+                    client.Headers["X-Jiji-Token"] = sessionToken;
+                    bytes = await WithTimeout(client.DownloadDataTaskAsync(new Uri(localOrigin + "/api/export")), 30000);
+                }
+                if (bytes.Length < 8 || Encoding.ASCII.GetString(bytes, 0, 5) != "%PDF-")
+                    throw new InvalidDataException();
+                var destination = ChooseSavePath("吉吉编辑_恢复文档.pdf");
+                if (destination == null) return;
+                await Task.Run(() => SavePdfAtomically(destination, bytes));
+                recoverySaved = true;
+                recoveryText.Text = "PDF 已保存。\n\n现在可以关闭并重新打开吉吉编辑软件，再打开刚才保存的 PDF。";
+            }
+            catch (Exception exception)
+            {
+                if (verificationDirectory != null) Fail("recovery-export", exception);
+                else if (!disposed) MessageBox.Show(this,
+                    "PDF 未能保存。请确认已经打开文档，并检查保存位置的权限和可用空间后重试。\n\n当前会话仍保留，请暂时不要关闭软件。",
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                saving = false;
+                if (!disposed) recoveryExport.Enabled = true;
+            }
+        }
+
+        private sealed class RecoveryPdfClient : WebClient
+        {
+            internal RecoveryPdfClient() { Proxy = null; }
+            protected override WebRequest GetWebRequest(Uri address)
+            {
+                var request = (HttpWebRequest)base.GetWebRequest(address);
+                request.AllowAutoRedirect = false;
+                request.Timeout = 30000;
+                request.ReadWriteTimeout = 30000;
+                return request;
             }
         }
 
@@ -183,7 +287,7 @@ namespace JijiEditor
 
         private async void SaveMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            if (disposed || saving || !IsLocal(e.Source)) return;
+            if (disposed || recovering || saving || !IsLocal(e.Source)) return;
             bool saved = false;
             bool saveRequest = false;
             try
@@ -220,7 +324,7 @@ namespace JijiEditor
             {
                 if (saveRequest)
                 {
-                    if (!disposed)
+                    if (!disposed && !recovering)
                     {
                         try { await web.ExecuteScriptAsync("window.jijiSaved(" + (saved ? "true" : "false") + ")"); }
                         catch { if (verificationDirectory != null) Fail("save-callback"); }
@@ -241,6 +345,11 @@ namespace JijiEditor
                 {
                     verificationSaveMode = 0;
                     return Path.Combine(verificationDirectory, "native-export.pdf");
+                }
+                if (verificationSaveMode == 3)
+                {
+                    verificationSaveMode = 0;
+                    return Path.Combine(verificationDirectory, "native-recovery-export.pdf");
                 }
                 throw new InvalidOperationException("Unexpected verification save.");
             }
@@ -294,6 +403,13 @@ namespace JijiEditor
             {
                 if (verificationDirectory == null) MessageBox.Show(this, "正在保存 PDF，请稍候再关闭。", Text);
                 return false;
+            }
+            if (recovering)
+            {
+                if (recoverySaved) return true;
+                if (verificationDecision.HasValue) return verificationDecision.Value;
+                return MessageBox.Show(this, "当前会话的文档尚未导出保存。关闭后无法恢复这些编辑。确定放弃并退出吗？",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
             }
             if (web.CoreWebView2 == null || loading.Visible) return true;
             bool dirty;
@@ -394,6 +510,31 @@ namespace JijiEditor
                 await Task.Delay(300);
                 using (var picture = File.Create(Path.Combine(verificationDirectory, "native-window.png")))
                     await web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, picture);
+                // Keep the regular editor screenshot, then exercise recovery against a
+                // genuinely newer unsaved document without depending on the renderer.
+                verificationStage = "recovery-cancel";
+                await web.ExecuteScriptAsync("window.__jijiRecoveryBeforeRevision = state.revision; document.getElementById('rotateBtn').click()");
+                await WaitForScript("!busy && dirtyLocal && state.revision > window.__jijiRecoveryBeforeRevision");
+                ShowRecovery();
+                if (await CanCloseAsync(false)) throw new InvalidOperationException();
+                verificationSaveMode = 1;
+                await ExportRecoveryAsync();
+                if (disposed) return;
+                if (recoverySaved || engine.HasExited || await CanCloseAsync(false) ||
+                    File.Exists(Path.Combine(verificationDirectory, "native-recovery-export.pdf")))
+                    throw new InvalidOperationException();
+                report["recoverySaveCancelledKeepsDirty"] = true;
+                verificationStage = "recovery-save";
+                verificationSaveMode = 3;
+                await ExportRecoveryAsync();
+                if (disposed) return;
+                var recovered = File.ReadAllBytes(Path.Combine(verificationDirectory, "native-recovery-export.pdf"));
+                if (!recoverySaved || engine.HasExited || recovered.Length < 1000 ||
+                    Encoding.ASCII.GetString(recovered, 0, 5) != "%PDF-")
+                    throw new InvalidDataException();
+                report["recoveryPdfExport"] = true;
+                if (!await CanCloseAsync(false)) throw new InvalidOperationException();
+                report["recoveryCloseGuard"] = true;
                 report["passed"] = true;
                 Finish(true);
             }

@@ -36,7 +36,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python scripts\verify_windows_native.py output\JijiEditor-Windows-x64\JijiEditor.exe
 ```
 
-Windows 包由 `JijiEditor.exe`（WinForms + WebView2）和 `backend/jiji-engine.exe`（PDF 服务）组成。`--verify-native 输出目录` 在真实内嵌窗口验证裁剪、撤销、保存、取消保存与关闭保护，并生成截图。服务单独支持 `--no-browser`；原生窗口不调用外部浏览器。
+Windows 包由 `JijiEditor.exe`（WinForms + WebView2）和 `backend/jiji-engine.exe`（PDF 服务）组成。`--verify-native 输出目录` 在真实内嵌窗口验证裁剪、撤销、保存、取消保存与关闭保护，并生成截图；另验证显示异常时不依赖网页的应急导出通道。保存路径和取消选择由测试注入，未自动操作系统保存对话框。服务单独支持 `--no-browser`；原生窗口不调用外部浏览器。
 
 Windows 构建会从微软官网下载 WebView2 安装引导程序并验证 Authenticode 签名，随包附带以便缺少运行时的电脑首次安装。发布测试从实际 ZIP 的中文及空格路径运行，原生窗口验证必须通过。
 

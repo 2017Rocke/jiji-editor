@@ -11,6 +11,7 @@ from package_common import ROOT, release_resources, windows_native_resources
 if sys.platform != "win32" or platform.machine().lower() not in {"amd64", "x86_64"}:
     raise SystemExit("Run this script with 64-bit Python on Windows, or use the GitHub release workflow.")
 os.chdir(ROOT)
+version = (ROOT / "VERSION").read_text().strip()
 subprocess.run([sys.executable, "scripts/make_icon.py"], check=True)
 subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onedir",
     "--name", "jiji-engine", "--icon", "build/AppIcon.ico", "--add-data", "web:web", "--add-data", "VERSION:.",
@@ -20,7 +21,7 @@ native = ROOT / "build/windows-native"
 if native.exists():
     shutil.rmtree(native)
 subprocess.run(["dotnet", "build", "scripts/windows-native/JijiEditor.csproj", "--configuration", "Release",
-                "--output", str(native)], check=True)
+                "--output", str(native), f"-p:Version={version}", f"-p:FileVersion={version}.0"], check=True)
 for filename in ["JijiEditor.exe", "JijiEditor.exe.config", "Microsoft.Web.WebView2.Core.dll",
                  "Microsoft.Web.WebView2.WinForms.dll"]:
     if not (native / filename).is_file():
@@ -48,6 +49,5 @@ windows_native_resources(package, ROOT / "scripts/windows-native/obj/project.ass
     "5. 转换 Word、Excel、PPT 需要独立安装免费的 LibreOffice。\n\n"
     "文档在本机处理，编辑无需联网。窗口关闭时会结束本次本地处理服务。\n",
     encoding="utf-8-sig")
-version = (ROOT / "VERSION").read_text().strip()
 archive = shutil.make_archive(str(ROOT / f"output/JijiEditor-{version}-Windows-x64"), "zip", package.parent, package.name)
 print(archive)

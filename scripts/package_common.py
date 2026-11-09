@@ -16,6 +16,34 @@ ROOT = Path(__file__).resolve().parents[1]
 WEBVIEW2_SETUP_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 
 
+def verify_microsoft_authenticode(installer):
+    """Use one PowerShell edition's own security module; never bypass a failed signature."""
+    powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
+    if not powershell:
+        raise RuntimeError("PowerShell is required to verify the Microsoft runtime installer.")
+    # A PowerShell 7 parent can leave its modules on Windows PowerShell 5.1's
+    # inherited lookup path. Let the chosen host construct its own module path.
+    environment = {name: value for name, value in os.environ.items()
+                   if name.upper() != "PSMODULEPATH"}
+    environment["JIJI_WEBVIEW2_INSTALLER"] = str(Path(installer).resolve())
+    check_signature = r'''
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+$signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $env:JIJI_WEBVIEW2_INSTALLER
+if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+    throw 'The WebView2 installer does not have a valid Authenticode signature.'
+}
+$subject = $signature.SignerCertificate.Subject
+if ($subject -notmatch '(^|,\s*)CN=Microsoft Corporation(,|$)' -or
+    $subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+    throw 'The WebView2 installer is not signed by Microsoft Corporation.'
+}
+Write-Output "Verified Microsoft WebView2 installer signature."
+'''
+    subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", check_signature],
+                   env=environment, check=True)
+
+
 def source_archive(target):
     result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True)
     files = [name.decode() for name in result.stdout.split(b"\0") if name]
@@ -102,22 +130,7 @@ def windows_native_resources(target, assets_file):
             source.seek(struct.unpack_from("<I", header, 60)[0])
             if source.read(4) != b"PE\0\0":
                 raise RuntimeError("Microsoft's WebView2 bootstrapper has an invalid PE header.")
-        environment = dict(os.environ, JIJI_WEBVIEW2_INSTALLER=str(temporary.resolve()))
-        check_signature = r'''
-$ErrorActionPreference = 'Stop'
-$signature = Get-AuthenticodeSignature -LiteralPath $env:JIJI_WEBVIEW2_INSTALLER
-if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
-    throw 'The WebView2 installer does not have a valid Authenticode signature.'
-}
-$subject = $signature.SignerCertificate.Subject
-if ($subject -notmatch '(^|,\s*)CN=Microsoft Corporation(,|$)' -or
-    $subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
-    throw 'The WebView2 installer is not signed by Microsoft Corporation.'
-}
-Write-Output "Verified Microsoft WebView2 installer signature."
-'''
-        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", check_signature],
-                       env=environment, check=True)
+        verify_microsoft_authenticode(temporary)
         temporary.replace(installer)
     finally:
         temporary.unlink(missing_ok=True)

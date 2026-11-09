@@ -9,7 +9,7 @@ from PIL import Image
 
 output = Path('output/native-windows').resolve()
 output.mkdir(parents=True, exist_ok=True)
-for name in ('native-verification.json', 'native-export.pdf', 'native-window.png'):
+for name in ('native-verification.json', 'native-export.pdf', 'native-recovery-export.pdf', 'native-window.png'):
     (output / name).unlink(missing_ok=True)
 process = subprocess.Popen([str(Path(sys.argv[1]).resolve()), '--verify-native', str(output)])
 try:
@@ -23,7 +23,8 @@ if not report_path.exists():
     raise RuntimeError(f'Windows desktop did not produce its verification report (exit {result})')
 report = json.loads(report_path.read_text(encoding='utf-8-sig'))
 checks = ('ready', 'embeddedWebView', 'batchCrop', 'undo', 'pdfExport',
-          'saveCancelledKeepsDirty', 'closeGuard')
+          'saveCancelledKeepsDirty', 'closeGuard', 'recoverySaveCancelledKeepsDirty',
+          'recoveryPdfExport', 'recoveryCloseGuard')
 for check in checks:
     if report.get(check) is not True:
         raise AssertionError(f'Windows desktop check failed: {check}; {report.get("error", "no detail")}')
@@ -32,6 +33,14 @@ if result != 0:
 with fitz.open(output / 'native-export.pdf') as document:
     assert len(document) == 3, 'Native export lost pages'
     assert all(page.rect.width > 0 and page.rect.height > 0 for page in document)
+    exported_rotations = [page.rotation for page in document]
+with fitz.open(output / 'native-recovery-export.pdf') as recovered:
+    assert len(recovered) == 3, 'Recovery export lost pages'
+    assert all(page.rect.width > 0 and page.rect.height > 0 for page in recovered)
+    assert [page.rotation for page in recovered] == [
+        (rotation + 90) % 360 if index in (0, 2) else rotation
+        for index, rotation in enumerate(exported_rotations)
+    ], 'Recovery export did not preserve the latest unsaved page edits'
 with Image.open(output / 'native-window.png') as screenshot:
     assert screenshot.width >= 900 and screenshot.height >= 600, 'Native window screenshot is incomplete'
 summary = {check: True for check in checks}
